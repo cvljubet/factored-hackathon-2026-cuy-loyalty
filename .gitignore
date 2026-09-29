@@ -1,0 +1,40 @@
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Node.js
+node_modules/
+dist/
+build/
+
+# Editor and operating system files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Generated data and model artifacts
+data/raw/*
+data/processed/*
+!data/raw/README.md
+!data/processed/README.md
+*.model
+*.pkl
+*.joblib
+
+# Terraform
+*.tfstate
+*.tfstate.*
+.terraform/
+
+# Test and coverage output
+.pytest_cache/
+.coverage
+htmlcov/
