@@ -2,10 +2,14 @@
 .env
 .env.*
 !.env.example
+.aws/
 
 # Python
 __pycache__/
 *.py[cod]
+*.py[oc]
+wheels/
+*.egg-info
 .venv/
 venv/
 
