@@ -7,6 +7,10 @@
 __pycache__/
 *.py[cod]
 .venv/
+*.egg-info/
+.ruff_cache/
+.mypy_cache/
+.ipynb_checkpoints/
 venv/
 
 # Node.js
@@ -28,13 +32,36 @@ data/processed/*
 *.model
 *.pkl
 *.joblib
+*.parquet
+*.csv
+!data/schemas/*.csv
 
 # Terraform
 *.tfstate
 *.tfstate.*
 .terraform/
+*.tfvars
+*.tfvars.json
+!*.tfvars.example
+*.tfplan
+tfplan
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+# Keep .terraform.lock.hcl committed
 
 # Test and coverage output
 .pytest_cache/
 .coverage
 htmlcov/
+
+# Logs
+*.log
+
+# Credentials and keys
+.aws/
+*.pem
+*.key
