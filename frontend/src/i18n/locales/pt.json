@@ -1,0 +1,42 @@
+{
+  "app": {
+    "name": "Loyalty Assistant",
+    "title": "Cuy Loyalty"
+  },
+  "language": {
+    "label": "Idioma: {{language}}",
+    "names": {
+      "es": "Español",
+      "pt": "Português"
+    }
+  },
+  "login": {
+    "heroTitleLine1": "Seu assistente",
+    "heroTitleLine2": "pessoal de fidelidade",
+    "heroSubtitle": "Explore seus benefícios, recompensas e produtos, tudo em um só lugar.",
+    "features": {
+      "personalized": "Informações personalizadas",
+      "recommendations": "Recomendações relevantes",
+      "benefits": "Acesse seus benefícios"
+    },
+    "welcome": "Bem-vindo de volta",
+    "subtitle": "Entre para continuar no seu Loyalty Assistant.",
+    "emailLabel": "E-mail",
+    "emailPlaceholder": "voce@exemplo.com",
+    "passwordLabel": "Senha",
+    "passwordPlaceholder": "Digite sua senha",
+    "showPassword": "Mostrar senha",
+    "hidePassword": "Ocultar senha",
+    "forgotPassword": "Esqueceu sua senha?",
+    "signIn": "Entrar"
+  },
+  "chat": {
+    "greeting": "Olá, {{name}}!",
+    "intro": "Sou seu <highlight>assistente de fidelidade</highlight>. Pergunte-me sobre seus benefícios, produtos disponíveis, opções de viagem e muito mais.",
+    "inputPlaceholder": "Digite uma mensagem...",
+    "inputLabel": "Mensagem",
+    "attachFile": "Anexar arquivo",
+    "send": "Enviar mensagem",
+    "mockReply": "Obrigado pela sua mensagem! Ainda estou me conectando à sua conta de fidelidade, então ainda não posso responder isso."
+  }
+}
