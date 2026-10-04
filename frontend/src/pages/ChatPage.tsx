@@ -1,13 +1,17 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Paperclip, Send } from 'lucide-react'
 import { Trans, useTranslation } from 'react-i18next'
+import { useNavigate } from 'react-router-dom'
+import { useAuth } from '../auth/context'
+import { displayName } from '../auth/user'
 import { Header } from '../components/Header'
 import { MessageBubble } from '../components/MessageBubble'
-import { mockMessages, mockUser, type Message } from '../data/mock'
+import { mockMessages, type Message } from '../data/mock'
 
 export function ChatPage() {
   const { t } = useTranslation()
-  const user = mockUser
+  const navigate = useNavigate()
+  const { user, signOut } = useAuth()
   const [messages, setMessages] = useState<Message[]>(mockMessages)
   const [draft, setDraft] = useState('')
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -43,9 +47,17 @@ export function ChatPage() {
     }, 800)
   }
 
+  async function handleSignOut() {
+    await signOut()
+    navigate('/login', { replace: true })
+  }
+
+  // ProtectedRoute only renders this page for a signed-in user.
+  if (!user) return null
+
   return (
     <div className="flex h-dvh flex-col">
-      <Header user={user} />
+      <Header user={user} onSignOut={handleSignOut} />
 
       <main className="relative flex min-h-0 flex-1 flex-col overflow-clip bg-mint-50">
         {/* Soft decorative curves from the reference */}
@@ -61,7 +73,7 @@ export function ChatPage() {
         <div ref={scrollRef} className="relative min-h-0 flex-1 overflow-y-auto">
           <div className="mx-auto max-w-4xl px-4 py-10 sm:px-8 sm:pt-24 sm:pb-16">
             <div className="sm:px-16">
-              <h1 className="text-4xl font-bold tracking-tight sm:text-5xl">{t('chat.greeting', { name: user.firstName })}</h1>
+              <h1 className="text-4xl font-bold tracking-tight sm:text-5xl">{t('chat.greeting', { name: displayName(user) })}</h1>
               <p className="mt-3 max-w-2xl text-lg text-slate-500 sm:text-2xl sm:leading-snug">
                 <Trans i18nKey="chat.intro" components={{ highlight: <span className="font-semibold text-slate-600" /> }} />
               </p>

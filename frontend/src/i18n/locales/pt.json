@@ -28,7 +28,17 @@
     "showPassword": "Mostrar senha",
     "hidePassword": "Ocultar senha",
     "forgotPassword": "Esqueceu sua senha?",
-    "signIn": "Entrar"
+    "signIn": "Entrar",
+    "signingIn": "Entrando...",
+    "errors": {
+      "invalidCredentials": "E-mail ou senha incorretos.",
+      "userNotConfirmed": "Sua conta ainda não foi confirmada. Entre em contato com o administrador.",
+      "passwordResetRequired": "Você precisa redefinir sua senha antes de entrar.",
+      "newPasswordRequired": "Sua conta exige uma nova senha. Entre em contato com o administrador.",
+      "tooManyAttempts": "Muitas tentativas. Aguarde um momento e tente novamente.",
+      "network": "Não foi possível conectar. Verifique sua conexão e tente novamente.",
+      "generic": "Não foi possível entrar. Tente novamente."
+    }
   },
   "chat": {
     "greeting": "Olá, {{name}}!",
@@ -38,5 +48,9 @@
     "attachFile": "Anexar arquivo",
     "send": "Enviar mensagem",
     "mockReply": "Obrigado pela sua mensagem! Ainda estou me conectando à sua conta de fidelidade, então ainda não posso responder isso."
+  },
+  "auth": {
+    "loading": "Carregando...",
+    "signOut": "Sair"
   }
 }

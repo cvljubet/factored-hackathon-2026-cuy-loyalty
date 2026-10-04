@@ -1,7 +1,10 @@
 import { useState, type FormEvent } from 'react'
 import { useTranslation } from 'react-i18next'
-import { useNavigate } from 'react-router-dom'
-import { ArrowRight, CreditCard, Eye, EyeOff, Gift, Lock, Mail, Plane } from 'lucide-react'
+import { Navigate, useNavigate } from 'react-router-dom'
+import { ArrowRight, CreditCard, Eye, EyeOff, Gift, LoaderCircle, Lock, Mail, Plane } from 'lucide-react'
+import { useAuth } from '../auth/context'
+import { loginErrorKey, type LoginErrorKey } from '../auth/errors'
+import { AuthLoading } from '../components/AuthLoading'
 import { Header } from '../components/Header'
 
 const features = [
@@ -13,12 +16,30 @@ const features = [
 export function LoginPage() {
   const { t } = useTranslation()
   const navigate = useNavigate()
+  const { status, signIn } = useAuth()
   const [showPassword, setShowPassword] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState<LoginErrorKey | null>(null)
 
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  if (status === 'loading') return <AuthLoading />
+  if (status === 'authenticated' && !submitting) return <Navigate to="/chat" replace />
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    // Mock sign-in: Cognito authentication will replace this.
-    navigate('/chat')
+    // Read the credentials straight from the form and hand them to Cognito; they are never kept in state.
+    const form = new FormData(event.currentTarget)
+    const email = String(form.get('email') ?? '').trim()
+    const password = String(form.get('password') ?? '')
+
+    setSubmitting(true)
+    setError(null)
+    try {
+      await signIn(email, password)
+      navigate('/chat', { replace: true })
+    } catch (signInError) {
+      setError(loginErrorKey(signInError))
+      setSubmitting(false)
+    }
   }
 
   return (
@@ -68,6 +89,7 @@ export function LoginPage() {
                   <Mail className="size-5 shrink-0 text-slate-500" />
                   <input
                     id="email"
+                    name="email"
                     type="email"
                     required
                     autoComplete="email"
@@ -85,6 +107,7 @@ export function LoginPage() {
                   <Lock className="size-5 shrink-0 text-slate-500" />
                   <input
                     id="password"
+                    name="password"
                     type={showPassword ? 'text' : 'password'}
                     required
                     autoComplete="current-password"
@@ -107,12 +130,19 @@ export function LoginPage() {
                 </div>
               </div>
 
+              {error && (
+                <p role="alert" className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">
+                  {t(error)}
+                </p>
+              )}
+
               <button
                 type="submit"
-                className="flex w-full items-center justify-center gap-3 rounded-lg bg-brand-500 py-4 text-lg font-semibold text-white transition-colors hover:bg-brand-600"
+                disabled={submitting}
+                className="flex w-full items-center justify-center gap-3 rounded-lg bg-brand-500 py-4 text-lg font-semibold text-white transition-colors hover:bg-brand-600 disabled:cursor-wait disabled:opacity-80"
               >
-                {t('login.signIn')}
-                <ArrowRight className="size-5" />
+                {submitting ? t('login.signingIn') : t('login.signIn')}
+                {submitting ? <LoaderCircle className="size-5 animate-spin" /> : <ArrowRight className="size-5" />}
               </button>
             </form>
           </section>

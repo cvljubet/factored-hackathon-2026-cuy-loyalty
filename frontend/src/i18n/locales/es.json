@@ -28,7 +28,17 @@
     "showPassword": "Mostrar contraseña",
     "hidePassword": "Ocultar contraseña",
     "forgotPassword": "¿Olvidaste tu contraseña?",
-    "signIn": "Iniciar sesión"
+    "signIn": "Iniciar sesión",
+    "signingIn": "Iniciando sesión...",
+    "errors": {
+      "invalidCredentials": "Correo electrónico o contraseña incorrectos.",
+      "userNotConfirmed": "Tu cuenta aún no está confirmada. Contacta al administrador.",
+      "passwordResetRequired": "Debes restablecer tu contraseña antes de iniciar sesión.",
+      "newPasswordRequired": "Tu cuenta requiere una nueva contraseña. Contacta al administrador.",
+      "tooManyAttempts": "Demasiados intentos. Espera un momento e inténtalo de nuevo.",
+      "network": "No se pudo conectar. Revisa tu conexión e inténtalo de nuevo.",
+      "generic": "No se pudo iniciar sesión. Inténtalo de nuevo."
+    }
   },
   "chat": {
     "greeting": "¡Hola, {{name}}!",
@@ -38,5 +48,9 @@
     "attachFile": "Adjuntar archivo",
     "send": "Enviar mensaje",
     "mockReply": "¡Gracias por tu mensaje! Todavía me estoy conectando a tu cuenta de lealtad, así que aún no puedo responder eso."
+  },
+  "auth": {
+    "loading": "Cargando...",
+    "signOut": "Cerrar sesión"
   }
 }

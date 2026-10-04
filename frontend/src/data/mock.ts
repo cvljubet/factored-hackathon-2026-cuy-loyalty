@@ -1,10 +1,4 @@
-// Placeholder data until Cognito auth and the chat API are wired up.
-
-export interface User {
-  firstName: string
-  lastName: string
-  email: string
-}
+// Placeholder conversation until the chat API is wired up.
 
 export type MessageRole = 'user' | 'assistant'
 
@@ -13,12 +7,6 @@ export interface Message {
   role: MessageRole
   text: string
   sentAt: Date
-}
-
-export const mockUser: User = {
-  firstName: 'Constanza',
-  lastName: 'Ljubetic',
-  email: 'constanza@example.com',
 }
 
 function todayAt(hours: number, minutes: number): Date {

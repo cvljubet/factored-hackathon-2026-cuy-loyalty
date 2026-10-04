@@ -1,14 +1,15 @@
-import { ChevronDown, Globe } from 'lucide-react'
+import { ChevronDown, Globe, LogOut } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import type { User } from '../data/mock'
+import { displayName, initials, type AuthUser } from '../auth/user'
 import { useLanguage } from '../i18n/useLanguage'
 import { Logo } from './Logo'
 
 interface HeaderProps {
-  user?: User
+  user?: AuthUser
+  onSignOut?: () => void
 }
 
-export function Header({ user }: HeaderProps) {
+export function Header({ user, onSignOut }: HeaderProps) {
   const { t } = useTranslation()
   const { language, setLanguage, languages } = useLanguage()
 
@@ -19,7 +20,7 @@ export function Header({ user }: HeaderProps) {
   }
 
   return (
-    <header className="shrink-0 bg-ink-900 text-white">
+    <header className="sticky top-0 z-50 shrink-0 bg-ink-900 text-white">
       <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-4 sm:h-20 sm:px-8">
         <div className="flex items-center gap-3">
           <Logo className="size-8 sm:size-10" />
@@ -41,11 +42,20 @@ export function Header({ user }: HeaderProps) {
           {user && (
             <div className="flex items-center gap-3">
               <span className="flex size-10 items-center justify-center rounded-full bg-mint-200 font-semibold text-ink-900 sm:size-11">
-                {user.firstName[0]}
-                {user.lastName[0]}
+                {initials(user)}
               </span>
-              <span className="hidden text-white/90 sm:inline">{user.firstName}</span>
-              <ChevronDown className="hidden size-4 text-white/90 sm:block" />
+              <span className="hidden text-white/90 sm:inline">{displayName(user)}</span>
+              {onSignOut && (
+                <button
+                  type="button"
+                  onClick={onSignOut}
+                  className="text-white/90 hover:text-white"
+                  aria-label={t('auth.signOut')}
+                  title={t('auth.signOut')}
+                >
+                  <LogOut className="size-5" />
+                </button>
+              )}
             </div>
           )}
         </div>
