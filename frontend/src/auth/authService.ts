@@ -1,4 +1,4 @@
-import { fetchUserAttributes, getCurrentUser, signIn, signOut } from 'aws-amplify/auth'
+import { fetchAuthSession, fetchUserAttributes, getCurrentUser, signIn, signOut } from 'aws-amplify/auth'
 import { Hub } from 'aws-amplify/utils'
 import { AuthChallengeError } from './errors'
 import type { AuthUser } from './user'
@@ -55,4 +55,18 @@ export const amplifyAuthService: AuthService = {
       if (payload.event === 'signedOut' || payload.event === 'tokenRefresh_failure') callback()
     })
   },
+}
+
+/**
+ * The current Cognito ID token for calling the backend, or null without a session.
+ * Amplify refreshes an expired token first, using the stored refresh token.
+ * The ID token (not the access token) is what the backend expects: it carries custom:customer_id.
+ */
+export async function fetchIdToken(): Promise<string | null> {
+  try {
+    const { tokens } = await fetchAuthSession()
+    return tokens?.idToken?.toString() ?? null
+  } catch {
+    return null
+  }
 }
