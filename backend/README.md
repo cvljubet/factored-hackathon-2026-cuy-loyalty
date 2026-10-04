@@ -7,8 +7,14 @@ FastAPI service for the Cuy Loyalty app. Dependencies live in the repo-root
 
 - `app/main.py`: app factory, CORS, router registration
 - `app/config.py`: settings from environment variables / repo-root `.env`
-- `app/auth.py`: Cognito JWT verification and the `get_current_user` dependency
-- `app/routers/`: API routes
+- `app/auth.py`: Cognito JWT verification and the `get_current_user` / `get_current_customer_id` dependencies
+- `app/customers/`: customer serving
+  - `models.py`: `Customer` (field names match gold `customer_360`) and the `CustomerProfile` response
+  - `repository.py`: the `CustomerRepository` interface and `InMemoryCustomerRepository`
+  - `service.py`: profile lookup logic, independent of storage
+  - `dependencies.py`: picks the repository implementation (`CUSTOMER_REPOSITORY`)
+  - `fake_data.py`: synthetic customers served until DynamoDB exists
+- `app/routers/`: API routes (`GET /me`, `GET /me/profile`)
 
 ## Configuration
 
@@ -22,6 +28,13 @@ Copy `.env.example` (repo root) to `.env` and fill in the Cognito values from
 | `COGNITO_APP_CLIENT_ID` | SPA app client ID; ID tokens must have it as `aud` |
 | `COGNITO_JWKS_CACHE_SECONDS` | Optional, default 3600 |
 | `CORS_ALLOW_ORIGINS` | Optional JSON list, default `["http://localhost:5173"]` |
+| `CUSTOMER_REPOSITORY` | Optional, default `memory` (synthetic data); DynamoDB comes later |
+
+## Customer data
+
+Customer routes never take a `customer_id` from the request. They depend on
+`CurrentCustomerId`, which comes only from the verified token's
+`custom:customer_id` (403 when absent), and pass it to the `CustomerRepository`.
 
 ## Authentication
 

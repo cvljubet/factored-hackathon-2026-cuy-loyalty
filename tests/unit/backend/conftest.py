@@ -22,6 +22,9 @@ os.environ.update(
 )
 
 from app.auth import CognitoTokenVerifier, get_token_verifier  # noqa: E402
+from app.customers.dependencies import get_customer_repository  # noqa: E402
+from app.customers.models import Customer  # noqa: E402
+from app.customers.repository import InMemoryCustomerRepository  # noqa: E402
 from app.main import app  # noqa: E402
 
 
@@ -87,9 +90,50 @@ def verifier(jwks_client: StubJWKClient) -> CognitoTokenVerifier:
     return CognitoTokenVerifier(ISSUER, CLIENT_ID, jwks_client)
 
 
+class RecordingCustomerRepository(InMemoryCustomerRepository):
+    """An in-memory repository that records which customer_ids were looked up."""
+
+    def __init__(self, customers: list[Customer]):
+        super().__init__(customers)
+        self.requested_ids: list[str] = []
+
+    def get_customer(self, customer_id: str) -> Customer | None:
+        self.requested_ids.append(customer_id)
+        return super().get_customer(customer_id)
+
+
+# The token's customer (custom:customer_id in id_token_claims) and another customer.
+OWN_CUSTOMER = Customer(
+    customer_id="CUST-0042",
+    first_name="Ana",
+    last_name="Quispe",
+    email="ana@example.com",
+    mobile_phone="+51 900 000 042",
+    city="Cusco",
+    state="Cusco",
+    country="PE",
+)
+OTHER_CUSTOMER = Customer(
+    customer_id="CUST-0099",
+    first_name="Bruno",
+    last_name="Other",
+    email="bruno@example.com",
+    mobile_phone="+55 11 90000 0099",
+    city="Recife",
+    state="Pernambuco",
+    country="BR",
+)
+
+
 @pytest.fixture
-def client(verifier: CognitoTokenVerifier):
+def customer_repository() -> RecordingCustomerRepository:
+    return RecordingCustomerRepository([OWN_CUSTOMER, OTHER_CUSTOMER])
+
+
+@pytest.fixture
+def client(verifier: CognitoTokenVerifier, customer_repository: RecordingCustomerRepository):
     app.dependency_overrides[get_token_verifier] = lambda: verifier
+    app.dependency_overrides[get_customer_repository] = lambda: customer_repository
     yield TestClient(app)
     app.dependency_overrides.clear()
 

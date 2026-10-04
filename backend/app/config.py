@@ -1,4 +1,5 @@
 from functools import lru_cache
+from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -15,6 +16,9 @@ class Settings(BaseSettings):
     cognito_app_client_id: str
     # Cognito signing keys rotate rarely; unknown key IDs trigger a refetch anyway.
     cognito_jwks_cache_seconds: int = 3600
+
+    # Where customer records are served from; "memory" is synthetic data until DynamoDB exists.
+    customer_repository: Literal["memory"] = "memory"
 
     # Browser origins allowed to call the API (the Vite dev server by default).
     cors_allow_origins: list[str] = ["http://localhost:5173"]

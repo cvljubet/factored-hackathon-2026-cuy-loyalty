@@ -127,3 +127,17 @@ def get_current_user(
 
 
 CurrentUser = Annotated[AuthenticatedUser, Depends(get_current_user)]
+
+
+def get_current_customer_id(user: CurrentUser) -> str:
+    """The signed-in user's customer_id, taken only from the verified token.
+
+    Customer data routes must scope every lookup by this, never by a request parameter.
+    """
+    # Authenticated, but not linked to a customer record, so there is nothing to serve.
+    if not user.customer_id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "User is not linked to a customer")
+    return user.customer_id
+
+
+CurrentCustomerId = Annotated[str, Depends(get_current_customer_id)]
