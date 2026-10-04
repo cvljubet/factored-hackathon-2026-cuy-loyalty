@@ -33,6 +33,12 @@ module "glue_etl" {
   scripts_dir      = "${path.root}/../../../../data/pipelines/glue"
 }
 
+module "auth" {
+  source              = "../../modules/cognito"
+  name_prefix         = local.name_prefix
+  deletion_protection = false # hackathon env: allow teardown
+}
+
 # Later tasks plug in here the same way, e.g.:
 # module "serving"  { source = "../../modules/dynamodb" ... }  # recommendations for the agent
 # module "app"      { source = "../../modules/ecs_service" ... } # backend + agent API
