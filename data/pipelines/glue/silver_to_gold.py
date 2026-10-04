@@ -5,6 +5,7 @@
     gold/customer_features   one row per customer, numeric features for the model
     gold/customer_360        one row per customer: profile + products + features,
                              what the agent reads after login
+    gold/_exclusions         per run and silver table: rows left out and why
 
 gold/recommendations is written later by the ranking model, not by this job.
 
@@ -12,7 +13,7 @@ Locally:  python silver_to_gold.py --lake_bucket /path/to/lake
 """
 import sys
 
-from pyspark.sql import DataFrame, SparkSession
+from pyspark.sql import DataFrame, Row, SparkSession
 from pyspark.sql import functions as F
 
 # The data ends 2026-06-17, so windows are anchored on the latest transaction,
@@ -21,6 +22,21 @@ WINDOW_DAYS = 90
 BENEFITS_KB = "reference/benefits_kb/"  # team-written, synthetic; optional
 # The data uses the Spanish labels; the dictionary lists English ones.
 PRODUCT_REASONS = ["Producto", "Comercial", "Retención", "Product", "Commercial", "Retention"]
+
+# Silver keeps every row and lists what's wrong with it in dq_reasons; this decides which
+# reasons keep a row out of gold. Rows whose customer or product doesn't exist go. A broken
+# branch, agent, campaign or interaction reference doesn't change what the row says about
+# its customer, so those rows stay. Customers are never left out: every output hangs off
+# them, and the advisor must find them after login.
+EXCLUDE_WHEN = {
+    "products": ["orphan_customers"],
+    "transactions": ["orphan_customers", "orphan_products"],
+    "call_center_interactions": ["orphan_customers"],
+    "complaints": ["orphan_customers"],
+    "satisfaction_surveys": ["orphan_customers", "score_out_of_range"],
+    "campaign_sends": ["orphan_customers"],
+}
+EXCLUSIONS = "table string, rows_in long, rows_excluded long, excluded_by_reason map<string,long>"
 
 
 def get_args(argv):
@@ -39,6 +55,25 @@ def get_args(argv):
 
 def lake_root(bucket: str) -> str:
     return bucket.rstrip("/") if bucket.startswith(("/", "file:")) else f"s3://{bucket}"
+
+
+def usable_rows(df: DataFrame, table: str, exclusions: list) -> DataFrame:
+    """Leave out the rows EXCLUDE_WHEN rules out for this table, and record how many per reason."""
+    reasons = EXCLUDE_WHEN.get(table)
+    if not reasons:
+        return df
+    excluded = F.exists("dq_reasons", lambda r: r.isin(reasons))
+    counts = df.agg(
+        F.count("*").alias("rows_in"),
+        F.count(F.when(excluded, 1)).alias("rows_excluded"),
+        *[F.count(F.when(F.array_contains("dq_reasons", r), 1)).alias(r) for r in reasons],
+    ).first()
+    by_reason = {r: counts[r] for r in reasons}
+    exclusions.append(
+        Row(table=table, rows_in=counts["rows_in"], rows_excluded=counts["rows_excluded"], excluded_by_reason=by_reason)
+    )
+    print(f"[gold] {table}: {counts['rows_excluded']} of {counts['rows_in']} rows left out {by_reason}")
+    return df.where(~excluded)
 
 
 def slug(col):
@@ -139,7 +174,7 @@ def build_customer_features(customers, products, transactions, fx, interactions,
     )
     complaint_counts = complaints.groupBy("customer_id").agg(F.count("*").alias("n_complaints"))
     csat = (
-        surveys.where((F.col("survey_type") == "CSAT") & ~F.col("dq_score_out_of_range"))
+        surveys.where(F.col("survey_type") == "CSAT")  # out-of-range scores are left out in usable_rows
         .groupBy("customer_id")
         .agg(F.avg("main_score").alias("avg_csat"))
     )
@@ -196,9 +231,10 @@ def main(argv):
         builder = builder.enableHiveSupport()
     spark = builder.getOrCreate()
     root = lake_root(args["lake_bucket"])
+    exclusions = []
 
     def silver(t):
-        return spark.read.parquet(f"{root}/silver/{t}/")
+        return usable_rows(spark.read.parquet(f"{root}/silver/{t}/"), t, exclusions)
 
     customers, products = silver("customers"), silver("products")
     features = build_customer_features(
@@ -215,6 +251,9 @@ def main(argv):
     write_gold(build_product_catalog(spark, root, products), root, args["gold_db"], "product_catalog")
     write_gold(features, root, args["gold_db"], "customer_features")
     write_gold(build_customer_360(customers, products, features), root, args["gold_db"], "customer_360")
+    spark.createDataFrame(exclusions, EXCLUSIONS).withColumn("run_at", F.current_timestamp()).write.mode(
+        "append"
+    ).json(f"{root}/gold/_exclusions/")
 
 
 if __name__ == "__main__":

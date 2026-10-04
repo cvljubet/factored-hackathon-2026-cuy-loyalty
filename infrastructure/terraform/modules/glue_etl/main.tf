@@ -20,6 +20,7 @@ locals {
     "--spark-event-logs-path"            = "s3://${var.artifacts_bucket}/spark-logs/"
     "--TempDir"                          = "s3://${var.artifacts_bucket}/tmp/"
     "--job-language"                     = "python"
+    "--extra-py-files"                   = "s3://${var.artifacts_bucket}/${aws_s3_object.dq_rules.key}"
   }
 }
 
@@ -29,6 +30,14 @@ resource "aws_s3_object" "script" {
   key         = "glue-scripts/${each.key}.py"
   source      = each.value
   source_hash = filemd5(each.value)
+}
+
+# Rules module the jobs import; --extra-py-files puts it on their Python path.
+resource "aws_s3_object" "dq_rules" {
+  bucket      = var.artifacts_bucket
+  key         = "glue-scripts/dq_rules.py"
+  source      = "${var.scripts_dir}/dq_rules.py"
+  source_hash = filemd5("${var.scripts_dir}/dq_rules.py")
 }
 
 resource "aws_glue_job" "this" {
