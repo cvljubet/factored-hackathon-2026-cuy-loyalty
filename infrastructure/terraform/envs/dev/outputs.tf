@@ -17,3 +17,19 @@ output "athena_workgroup" {
 output "glue_workflow" {
   value = module.glue_etl.workflow_name
 }
+
+output "aws_region" {
+  value = var.region
+}
+
+output "cognito_user_pool_id" {
+  value = module.auth.user_pool_id
+}
+
+output "cognito_client_id" {
+  value = module.auth.user_pool_client_id
+}
+
+output "cognito_issuer_url" {
+  value = module.auth.issuer_url
+}

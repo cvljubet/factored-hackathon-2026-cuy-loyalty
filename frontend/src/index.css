@@ -1,0 +1,22 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Segoe UI", system-ui, -apple-system, Roboto, "Helvetica Neue", Arial, sans-serif;
+
+  --color-ink-900: #12191c;
+  --color-ink-800: #1b2428;
+
+  --color-mint-50: #f2faf9;
+  --color-mint-100: #e3f5f3;
+  --color-mint-200: #c6ebe7;
+  --color-mint-300: #a4dfda;
+
+  --color-brand-400: #4fbab5;
+  --color-brand-500: #3aa8a6;
+  --color-brand-600: #2f9592;
+  --color-brand-700: #247a78;
+}
+
+body {
+  @apply bg-mint-50 font-sans text-ink-900 antialiased;
+}
