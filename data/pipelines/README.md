@@ -56,6 +56,18 @@ than `LATE_ARRIVAL_DAYS`, 1); a row processed before its event is flagged
 from the `year=/month=/day=` folders, lists days without a file, days with unusual volume (under half or
 over twice the median day) and rows filed under another day than their process_date.
 
+All reports are Glue tables (`dq_*_report` in the silver database, `dq_exclusions` in gold, from the
+`dq_reporting` Terraform module), and the Athena view `dq_summary` puts every check of each table's
+latest run in one shape: `layer, report, table_name, check_type, check_name, failing_rows, total_rows,
+failing_pct, status, detail, run_at`. For the data quality slide:
+
+```sql
+SELECT table_name, check_type, check_name, failing_rows, failing_pct, status, detail
+FROM cuy_loyalty_dev_silver.dq_summary
+WHERE status NOT IN ('ok')
+ORDER BY failing_pct DESC NULLS LAST;
+```
+
 Tests build a small bronze lake with one planted case per rule and run both jobs on it:
 
 ```bash

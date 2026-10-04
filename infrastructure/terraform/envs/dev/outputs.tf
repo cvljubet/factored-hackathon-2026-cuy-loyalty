@@ -14,6 +14,10 @@ output "athena_workgroup" {
   value = module.catalog.athena_workgroup
 }
 
+output "dq_summary_view" {
+  value = module.dq_reporting.dq_summary_view
+}
+
 output "glue_workflow" {
   value = module.glue_etl.workflow_name
 }
