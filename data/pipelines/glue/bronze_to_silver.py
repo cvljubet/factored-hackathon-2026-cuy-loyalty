@@ -19,7 +19,7 @@ TABLES = {
         "dates": ["date_of_birth"],
         "timestamps": ["registration_date", "last_updated"],
         "ints": ["credit_score"],
-        "decimals": ["estimated_monthly_income"],
+        "doubles": ["estimated_monthly_income"],
         "bools": ["accepts_marketing"],
         "order_by": "last_updated",
     },
@@ -28,7 +28,8 @@ TABLES = {
         "dates": ["opening_date", "expiration_date"],
         "timestamps": ["last_transaction_date", "last_updated"],
         "ints": ["days_past_due"],
-        "decimals": ["current_balance", "credit_limit", "interest_rate"],
+        "decimals": ["current_balance"],
+        "doubles": ["credit_limit", "interest_rate"],
         "bools": ["has_linked_app"],
         "order_by": "last_updated",
     },
@@ -36,19 +37,20 @@ TABLES = {
         "pk": ["branch_id"],
         "dates": ["branch_opening_date"],
         "ints": ["atm_count", "teller_window_count"],
-        "decimals": ["latitude", "longitude"],
+        "doubles": ["latitude", "longitude"],
         "bools": ["has_atms", "has_teller_windows"],
     },
     "service_agents": {
         "pk": ["agent_id"],
         "dates": ["hire_date"],
         "ints": ["total_monthly_interactions"],
-        "decimals": ["avg_csat"],
+        "doubles": ["avg_csat"],
     },
     "marketing_campaigns": {
         "pk": ["campaign_id"],
         "dates": ["start_date", "end_date"],
-        "decimals": ["budget", "expected_conversion_rate"],
+        "decimals": ["budget"],
+        "doubles": ["expected_conversion_rate"],
     },
     "campaign_sends": {
         "pk": ["send_id"],
@@ -57,7 +59,8 @@ TABLES = {
         "pk": ["transaction_id"],
         "timestamps": ["transaction_date"],
         "dates": ["process_date"],
-        "decimals": ["amount", "amount_usd", "fraud_score", "latitude", "longitude"],
+        "decimals": ["amount"],
+        "doubles": ["amount_usd", "fraud_score", "latitude", "longitude"],
         "bools": ["is_fraud"],
         "partition_by": "transaction_date",
     },
@@ -66,7 +69,7 @@ TABLES = {
         "timestamps": ["interaction_date"],
         "dates": ["process_date"],
         "ints": ["duration_seconds", "wait_time_seconds"],
-        "decimals": ["sentiment_score"],
+        "doubles": ["sentiment_score"],
         "bools": ["was_resolved", "requires_followup", "was_escalated", "has_transcript", "has_recording"],
         "partition_by": "interaction_date",
     },
@@ -74,21 +77,21 @@ TABLES = {
         "pk": ["transcript_id"],
         "dates": ["process_date"],
         "ints": ["duration_seconds"],
-        "decimals": ["accent_confidence"],
+        "doubles": ["accent_confidence"],
     },
     "satisfaction_surveys": {
         "pk": ["survey_id"],
         "timestamps": ["survey_date"],
         "dates": ["process_date"],
         "ints": ["main_score"],
-        "decimals": ["response_time_hours"],
+        "doubles": ["response_time_hours"],
     },
     "digital_events": {
         "pk": ["event_id"],
         "timestamps": ["event_date"],
         "dates": ["process_date"],
         "ints": ["duration_seconds"],
-        "decimals": ["event_value"],
+        "doubles": ["event_value"],
         "bools": ["is_mobile"],
         "partition_by": "event_date",
     },
@@ -100,7 +103,7 @@ TABLES = {
     "daily_exchange_rates": {
         "pk": ["date", "source_currency", "target_currency"],
         "dates": ["date"],
-        "decimals": ["exchange_rate", "buy_rate", "sell_rate"],
+        "doubles": ["exchange_rate", "buy_rate", "sell_rate"],
     },
 }
 
@@ -163,8 +166,10 @@ def clean(df: DataFrame, cfg: dict) -> DataFrame:
         df = df.withColumn(c, F.to_timestamp(c))
     for c in cfg.get("ints", []):
         df = df.withColumn(c, F.col(c).cast("double").cast("int"))
-    for c in cfg.get("decimals", []):
+    for c in cfg.get("decimals", []):  # money: exact, but pandas reads these as Decimal objects
         df = df.withColumn(c, F.col(c).cast("decimal(20,8)"))
+    for c in cfg.get("doubles", []):  # non-monetary numerics: float64 downstream
+        df = df.withColumn(c, F.col(c).cast("double"))
     for c in cfg.get("bools", []):
         df = df.withColumn(c, F.lower(F.col(c)).isin("true", "1", "t", "yes", "si", "sí"))
 
