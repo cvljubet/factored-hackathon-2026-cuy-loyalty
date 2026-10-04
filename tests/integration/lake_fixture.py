@@ -1,57 +1,12 @@
 """A tiny bronze lake for the Glue job tests: valid rows plus one planted case per rule.
 
-Ids ending in 9 (C9, P9, B9, A9, I9, M9) exist in no parent table. Only the columns
-the jobs read are written; the rest of the dictionary's columns are left out.
+Ids ending in 9 (C9, P9, B9, A9, I9, M9) exist in no parent table. Files carry the full
+header the silver job expects (COLUMNS); columns a row doesn't set are left blank.
 """
 import csv
 from pathlib import Path
 
-COLUMNS = {
-    "branches": [
-        "branch_id", "country", "branch_opening_date", "has_atms", "atm_count", "has_teller_windows",
-        "teller_window_count", "latitude", "longitude",
-    ],
-    "service_agents": ["agent_id", "assigned_branch_id", "hire_date", "avg_csat", "total_monthly_interactions"],
-    "marketing_campaigns": ["campaign_id", "start_date", "end_date", "budget", "expected_conversion_rate"],
-    "customers": [
-        "customer_id", "first_name", "last_name", "email", "mobile_phone", "date_of_birth", "city", "state",
-        "country", "segment", "credit_score", "estimated_monthly_income", "registration_date",
-        "registration_branch_id", "customer_status", "last_updated", "accepts_marketing",
-    ],
-    "products": [
-        "product_id", "customer_id", "product_type", "currency", "current_balance", "credit_limit",
-        "interest_rate", "opening_date", "expiration_date", "opening_branch_id", "product_status",
-        "has_linked_app", "days_past_due", "last_transaction_date", "last_updated",
-    ],
-    "transactions": [
-        "transaction_id", "transaction_date", "process_date", "product_id", "customer_id", "transaction_type",
-        "transaction_category", "amount", "currency", "amount_usd", "branch_id", "transaction_country",
-        "transaction_status", "is_fraud", "fraud_score", "latitude", "longitude",
-    ],
-    "call_center_interactions": [
-        "interaction_id", "interaction_date", "process_date", "customer_id", "agent_id", "contact_reason",
-        "reason_category", "duration_seconds", "wait_time_seconds", "was_resolved", "requires_followup",
-        "sentiment_score", "was_escalated", "has_transcript", "has_recording",
-    ],
-    "call_transcripts": [
-        "transcript_id", "interaction_id", "process_date", "customer_id", "agent_id", "accent_confidence",
-        "duration_seconds",
-    ],
-    "satisfaction_surveys": [
-        "survey_id", "survey_date", "process_date", "interaction_id", "customer_id", "agent_id", "survey_type",
-        "main_score", "response_time_hours",
-    ],
-    "digital_events": [
-        "event_id", "event_date", "process_date", "customer_id", "product_id", "event_value", "duration_seconds",
-        "is_mobile",
-    ],
-    "complaints": [
-        "complaint_id", "creation_date", "process_date", "customer_id", "affected_product_id", "related_branch_id",
-        "origin_interaction_id", "assigned_agent_id", "assignment_date",
-    ],
-    "campaign_sends": ["send_id", "send_date", "process_date", "campaign_id", "customer_id"],
-    "daily_exchange_rates": ["date", "source_currency", "target_currency", "exchange_rate", "buy_rate", "sell_rate"],
-}
+from bronze_to_silver import COLUMNS
 
 
 def rows(defaults: dict, *overrides: dict) -> list:
@@ -83,6 +38,12 @@ ROWS = {
         {"customer_id": "C3", "registration_branch_id": "B9"},  # orphan_branches
         {"customer_id": "C4", "registration_branch_id": ""},  # orphan_branches: null in a NOT NULL key
         {"customer_id": "C5", "credit_score": "900"},  # credit_score_out_of_range
+        # Duplicates. C2 twice, identical: an exact duplicate.
+        {"customer_id": "C2", "registration_branch_id": "B2"},
+        # C1 in three versions: the latest update wins (Medellin); an update after the dataset
+        # ends can't win (Cali).
+        {"customer_id": "C1", "city": "Medellin", "last_updated": "2026-03-01 09:00:00"},
+        {"customer_id": "C1", "city": "Cali", "last_updated": "2026-09-01 09:00:00"},
     ),
     "products": rows(
         {
@@ -117,6 +78,9 @@ ROWS = {
         {"transaction_id": "T7", "transaction_date": "2026-06-05 12:00:00", "product_id": "P1", "customer_id": "C1",
          "branch_id": "B9"},
         {"transaction_id": "T8", "transaction_date": "2026-06-10 12:00:00", "product_id": "P1", "customer_id": "C1"},
+        # Duplicate: T8 again with a later process_date wins over the one without.
+        {"transaction_id": "T8", "transaction_date": "2026-06-10 12:00:00", "product_id": "P1", "customer_id": "C1",
+         "process_date": "2026-06-11", "amount": "200000"},
     ),
     "call_center_interactions": rows(
         {
@@ -158,6 +122,9 @@ ROWS = {
         {"event_id": "E2"},  # anonymous, no product: allowed, both columns are nullable
         {"event_id": "E3", "customer_id": "C9"},  # orphan_customers
         {"event_id": "E4", "customer_id": "C1", "product_id": "P9"},  # orphan_products
+        # No key: kept, flagged missing_key, not merged with each other.
+        {"event_id": "", "customer_id": "C1", "product_id": "P1"},
+        {"event_id": "", "customer_id": "C2"},
     ),
     # origin_interaction_id is blank in every row, as in the source.
     "complaints": rows(
@@ -183,11 +150,39 @@ ROWS = {
 }
 
 
-def write_bronze(root: Path, ingest_date: str = "2026-10-01") -> None:
+def write_csv(path: Path, header: list, table_rows: list) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=header, restval="")
+        writer.writeheader()
+        writer.writerows(table_rows)
+
+
+# Daily tables keep the source's year=/month=/day= folders in bronze, as ingest_to_bronze.sh copies them.
+DAILY = {
+    "transactions", "call_center_interactions", "call_transcripts", "satisfaction_surveys", "digital_events",
+    "complaints", "campaign_sends", "daily_exchange_rates",
+}
+
+
+def bronze_file(root: Path, table: str, ingest_date: str = "2026-10-01") -> Path:
+    folder = root / "bronze" / table / f"ingest_date={ingest_date}"
+    if table in DAILY:
+        return folder / "year=2026" / "month=06" / "day=01" / f"{table}_20260601.csv"
+    return folder / f"{table}.csv"
+
+
+# A later ingest: its version of P2 wins although its last_updated is older.
+LATER_ROWS = {
+    "products": rows(
+        {**ROWS["products"][1], "current_balance": "5000", "last_updated": "2025-01-01 09:00:00"},
+        {},
+    ),
+}
+
+
+def write_bronze(root: Path) -> None:
     for table, table_rows in ROWS.items():
-        folder = root / "bronze" / table / f"ingest_date={ingest_date}"
-        folder.mkdir(parents=True)
-        with open(folder / f"{table}.csv", "w", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=COLUMNS[table], restval="")
-            writer.writeheader()
-            writer.writerows(table_rows)
+        write_csv(bronze_file(root, table), COLUMNS[table], table_rows)
+    for table, table_rows in LATER_ROWS.items():
+        write_csv(bronze_file(root, table, ingest_date="2026-10-02"), COLUMNS[table], table_rows)

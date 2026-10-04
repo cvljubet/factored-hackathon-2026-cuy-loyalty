@@ -16,12 +16,14 @@ Locally it runs against a folder, without a catalog:
 With --tables, the parents of the selected tables must already be in silver.
 """
 import sys
+from functools import reduce
 from graphlib import TopologicalSorter
 
 from pyspark.sql import DataFrame, Row, SparkSession, Window
 from pyspark.sql import functions as F
+from pyspark.sql.types import StringType, StructField, StructType
 
-from dq_rules import FOREIGN_KEYS, ORPHAN_FAIL_PCT, ORPHAN_WARN_PCT
+from dq_rules import DATASET_END, FOREIGN_KEYS, ORPHAN_FAIL_PCT, ORPHAN_WARN_PCT
 
 # Column types follow the LATAM Bank data dictionary. Columns not listed stay strings.
 TABLES = {
@@ -118,12 +120,99 @@ TABLES = {
     },
 }
 
+# Expected header of every bronze file: the data dictionary's columns, in its order (the real
+# files matched it on 2026-10-04). A file whose header differs fails the job, so a
+# schema change in the source is adopted here on purpose, never absorbed silently.
+COLUMNS = {
+    "customers": [
+        "customer_id", "document_number", "document_type", "first_name", "last_name", "date_of_birth", "gender",
+        "email", "mobile_phone", "landline_phone", "address", "city", "state", "country", "postal_code",
+        "detected_accent", "segment", "credit_score", "estimated_monthly_income", "occupation", "marital_status",
+        "education_level", "registration_date", "registration_branch_id", "customer_status", "last_updated",
+        "accepts_marketing",
+    ],
+    "products": [
+        "product_id", "customer_id", "product_type", "product_number", "currency", "current_balance",
+        "credit_limit", "interest_rate", "opening_date", "expiration_date", "opening_branch_id", "product_status",
+        "opening_channel", "has_linked_app", "days_past_due", "last_transaction_date", "last_updated",
+    ],
+    "branches": [
+        "branch_id", "branch_code", "branch_name", "branch_type", "address", "city", "state", "country",
+        "postal_code", "geographic_zone", "phone", "email", "opening_time", "closing_time", "has_atms", "atm_count",
+        "has_teller_windows", "teller_window_count", "latitude", "longitude", "branch_opening_date",
+        "branch_status",
+    ],
+    "service_agents": [
+        "agent_id", "employee_code", "first_name", "last_name", "email", "phone", "native_accent",
+        "country_of_origin", "assigned_branch_id", "agent_type", "experience_level", "languages", "specialty",
+        "hire_date", "avg_csat", "total_monthly_interactions", "agent_status", "work_shift",
+    ],
+    "marketing_campaigns": [
+        "campaign_id", "campaign_name", "description", "campaign_type", "campaign_objective", "promoted_product",
+        "target_segment", "target_country", "start_date", "end_date", "budget", "campaign_status",
+        "expected_conversion_rate",
+    ],
+    "campaign_sends": [
+        "send_id", "send_date", "process_date", "campaign_id", "customer_id", "send_channel", "template_used",
+        "subject", "send_status", "was_delivered", "was_opened", "open_date", "was_clicked", "click_date",
+        "click_count", "had_conversion", "conversion_date", "conversion_value", "open_device", "open_country",
+        "failure_reason", "send_cost",
+    ],
+    "transactions": [
+        "transaction_id", "transaction_date", "process_date", "product_id", "customer_id", "transaction_type",
+        "transaction_category", "amount", "currency", "amount_usd", "channel", "branch_id", "merchant_name",
+        "merchant_category", "transaction_country", "transaction_city", "transaction_status", "response_code",
+        "is_fraud", "fraud_score", "latitude", "longitude",
+    ],
+    "call_center_interactions": [
+        "interaction_id", "interaction_date", "process_date", "customer_id", "agent_id", "interaction_type",
+        "channel", "contact_reason", "reason_category", "duration_seconds", "wait_time_seconds", "was_resolved",
+        "requires_followup", "detected_sentiment", "sentiment_score", "customer_detected_accent",
+        "agent_used_accent", "was_escalated", "mentioned_products", "has_transcript", "has_recording",
+    ],
+    "call_transcripts": [
+        "transcript_id", "interaction_id", "process_date", "customer_id", "agent_id", "full_text", "customer_text",
+        "agent_text", "detected_language", "detected_accent", "accent_confidence", "detected_keywords",
+        "mentioned_entities", "detected_intents", "main_topics", "transcription_model", "audio_quality",
+        "duration_seconds",
+    ],
+    "satisfaction_surveys": [
+        "survey_id", "survey_date", "process_date", "interaction_id", "customer_id", "agent_id", "survey_type",
+        "send_channel", "main_score", "nps_category", "question_1_text", "question_1_response", "question_2_text",
+        "question_2_response", "question_3_text", "question_3_response", "open_comments", "comment_sentiment",
+        "response_time_hours", "campaign_response_rate",
+    ],
+    "digital_events": [
+        "event_id", "event_date", "process_date", "customer_id", "session_id", "event_type", "event_category",
+        "channel", "platform", "browser", "app_version", "page_url", "page_title", "action", "element_id",
+        "product_id", "event_value", "duration_seconds", "ip_address", "ip_country", "ip_city", "is_mobile",
+        "referrer", "utm_source", "utm_medium", "utm_campaign",
+    ],
+    "complaints": [
+        "complaint_id", "creation_date", "process_date", "customer_id", "case_type", "category", "subcategory",
+        "reception_channel", "affected_product_id", "related_branch_id", "origin_interaction_id", "description",
+        "claimed_amount", "currency", "priority", "status", "assigned_agent_id", "assignment_date",
+        "first_response_date", "resolution_date", "closing_date", "sla_breached", "resolution_days", "resolution",
+        "compensation_granted", "resolution_satisfaction", "is_repeat_complainer",
+    ],
+    "daily_exchange_rates": [
+        "date", "source_currency", "target_currency", "exchange_rate", "buy_rate", "sell_rate", "source",
+    ],
+}
+
 NULL_TOKENS = ["", "nan", "NaN", "None", "null", "NULL", "N/A"]
 COUNTRY_FIXES = {"Mexico": "México"}  # transactions mix both spellings
 CURRENCY_COLUMNS = ["currency", "source_currency", "target_currency"]
 COUNTRY_COLUMNS = ["country", "transaction_country", "target_country", "country_of_origin", "ip_country"]
 
 FLAG_PREFIX = "dq_invalid_"
+# rows_removed = exact_duplicates (copies identical to a kept or removed row) + conflicting_duplicates
+# (other versions of a key, which lost the tie-break).
+DQ_REPORT = (
+    "table string, rows_in long, rows_out long, rows_removed long,"
+    " duplicate_keys long, exact_duplicates long, conflicting_keys long, conflicting_duplicates long"
+)
+DQ_REPORT_DUPLICATES = ["duplicate_keys", "exact_duplicates", "conflicting_keys", "conflicting_duplicates"]
 RULE_REPORT = "table string, rule string, failing_rows long, rows long, failing_pct double"
 FK_REPORT = (
     "child_table string, child_column string, parent_table string, parent_column string, nullable boolean,"
@@ -159,12 +248,15 @@ def read_bronze(spark: SparkSession, root: str, table: str) -> DataFrame:
     # year=/month=/day= folders. Spark reads both and turns every key=value folder
     # into a column (ingest_date, plus year/month/day for daily tables).
     # Everything comes in as string; types are applied explicitly below so a bad
-    # value becomes null instead of failing the job.
+    # value becomes null instead of failing the job. A bad header, though, fails it:
+    # enforceSchema=False checks each file's header against COLUMNS, by name and position.
+    schema = StructType([StructField(c, StringType()) for c in COLUMNS[table]])
     df = (
-        spark.read.option("header", True)
+        spark.read.schema(schema)
+        .option("header", True)
+        .option("enforceSchema", False)
         .option("multiLine", True)  # transcripts contain line breaks
         .option("escape", '"')
-        .option("inferSchema", False)
         .csv(f"{root}/bronze/{table}/")
         .withColumn("_source_file", F.input_file_name())
     )
@@ -221,17 +313,41 @@ def add_quality_flags(df: DataFrame, table: str) -> DataFrame:
     return df
 
 
-def deduplicate(df: DataFrame, cfg: dict) -> DataFrame:
-    # Latest ingest wins; within one ingest, the most recently updated row wins.
+def deduplicate(df: DataFrame, table: str, cfg: dict) -> DataFrame:
+    """Keep one row per primary key, always the same one, and say what it replaced.
+
+    The winner is the latest ingest, then the latest update (cfg order_by; a date after the
+    dataset ends can't win), then the latest process_date, then the row's content hash and file,
+    so reruns pick the same row. dq_copies is how many bronze rows had the key and dq_versions how
+    many distinct contents they had (1 = exact copies only). Rows with no key can't be deduplicated
+    or joined to; they're kept, one each, flagged dq_invalid_missing_key.
+    """
+    # Compared after clean(), so "nan" vs "" or "Mexico" vs "México" isn't a conflict.
+    df = df.withColumn("_content_hash", F.xxhash64(*COLUMNS[table]))
     order = [F.col("ingest_date").desc()]
     if cfg.get("order_by"):
-        order.append(F.col(cfg["order_by"]).desc_nulls_last())
-    w = Window.partitionBy(*cfg["pk"]).orderBy(*order)
-    return (
-        df.where(F.concat_ws("", *[F.col(k) for k in cfg["pk"]]) != "")  # drop rows with no key
-        .withColumn("_rn", F.row_number().over(w))
+        updated = F.col(cfg["order_by"])
+        order.append(F.when(F.to_date(updated) <= F.lit(DATASET_END), updated).desc_nulls_last())
+    if "process_date" in df.columns:
+        order.append(F.col("process_date").desc_nulls_last())
+    order += [F.col("_content_hash").desc(), F.col("_source_file").desc()]
+
+    missing_key = reduce(lambda a, b: a | b, [F.col(k).isNull() for k in cfg["pk"]])
+    key = Window.partitionBy(*cfg["pk"])
+    keyed = (
+        df.where(~missing_key)
+        .withColumn("dq_copies", F.count("*").over(key))
+        .withColumn("dq_versions", F.size(F.collect_set("_content_hash").over(key)))
+        .withColumn("_rn", F.row_number().over(key.orderBy(*order)))
         .where("_rn = 1")
         .drop("_rn")
+    )
+    keyless = df.where(missing_key).withColumns({"dq_copies": F.lit(1), "dq_versions": F.lit(1)})
+    return (
+        keyed.unionByName(keyless)
+        .withColumn("dq_invalid_missing_key", missing_key)
+        .withColumns({"dq_copies": F.col("dq_copies").cast("int"), "dq_versions": F.col("dq_versions").cast("int")})
+        .drop("_content_hash")
     )
 
 
@@ -322,6 +438,10 @@ def table_stats(df: DataFrame, table: str) -> dict:
     return df.agg(
         F.count("*").alias("rows"),
         F.count(F.when(~F.col("dq_is_valid"), 1)).alias("invalid"),
+        F.count(F.when(F.col("dq_copies") > 1, 1)).alias("duplicate_keys"),
+        F.sum(F.col("dq_copies") - F.col("dq_versions")).alias("exact_duplicates"),
+        F.count(F.when(F.col("dq_versions") > 1, 1)).alias("conflicting_keys"),
+        F.sum(F.col("dq_versions") - 1).alias("conflicting_duplicates"),
         *[F.count(F.when(F.col(c), 1)).alias(c) for c in flags],
         *[F.count(F.when(F.col(c).isNull(), 1)).alias(f"nulls:{c}") for c in fk_columns],
     ).first().asDict()
@@ -332,8 +452,9 @@ def pct(part: int, whole: int) -> float:
 
 
 def rule_rows(table: str, stats: dict) -> list:
+    rows = stats["rows"]
     return [
-        Row(table=table, rule=c[len(FLAG_PREFIX):], failing_rows=n, rows=stats["rows"], failing_pct=pct(n, stats["rows"]))
+        Row(table=table, rule=c[len(FLAG_PREFIX):], failing_rows=n, rows=rows, failing_pct=pct(n, rows))
         for c, n in stats.items()
         if c.startswith(FLAG_PREFIX)
     ]
@@ -400,7 +521,7 @@ def main(argv):
     for table in build_order(selected):
         cfg = TABLES[table]
         raw = read_bronze(spark, root, table).cache()
-        silver = deduplicate(add_quality_flags(clean(raw, cfg), table), cfg)
+        silver = deduplicate(add_quality_flags(clean(raw, cfg), table), table, cfg)
         silver = add_cross_table_flags(spark, root, add_orphan_flags(spark, root, silver, table), table)
         silver = add_validity(silver).withColumn("_processed_at", F.current_timestamp())
         write_silver(silver, root, args["silver_db"], table, cfg)
@@ -408,11 +529,15 @@ def main(argv):
         rules += rule_rows(table, stats)
         fks += fk_rows(table, stats)
         rows_in, rows_out = raw.count(), stats["rows"]
-        report.append((table, rows_in, rows_out, rows_in - rows_out))
+        dups = [stats[k] or 0 for k in DQ_REPORT_DUPLICATES]
+        report.append((table, rows_in, rows_out, rows_in - rows_out, *dups))
         raw.unpersist()
-        print(f"[silver] {table}: {rows_in} raw rows -> {rows_out} rows, {stats['invalid']} not valid")
+        print(
+            f"[silver] {table}: {rows_in} raw rows -> {rows_out} rows, {stats['invalid']} not valid;"
+            f" removed {dups[1]} exact and {dups[3]} conflicting duplicates"
+        )
 
-    write_report(spark, root, "_dq_report", report, "table string, rows_in long, rows_out long, rows_removed long")
+    write_report(spark, root, "_dq_report", report, DQ_REPORT)
     write_report(spark, root, "_rule_report", rules, RULE_REPORT)
     write_report(spark, root, "_fk_report", fks, FK_REPORT)
     check_orphans(fks)

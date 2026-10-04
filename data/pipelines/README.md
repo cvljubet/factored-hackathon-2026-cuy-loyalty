@@ -13,6 +13,17 @@ Place data ingestion, validation, and transformation pipeline code here.
 
 ### Data quality
 
+Every bronze file must have exactly the header in `COLUMNS` (`bronze_to_silver.py`): the data
+dictionary's columns, in its order. A file with a column added, missing, renamed or moved fails the
+job, and the error names the file. When the source schema really changes, update `COLUMNS` (and
+`TABLES` for the types) in the same change that handles the new column.
+
+Duplicates are the one thing silver removes: one row per primary key, always the same one (latest
+ingest, then latest `last_updated` not after the dataset's end, then latest `process_date`, then a hash
+of the row). `dq_copies` and `dq_versions` on the kept row say how many bronze rows shared its key and
+how many distinct contents they had; `silver/_dq_report/` splits the removed rows into exact and
+conflicting duplicates. Rows with no key are kept, one each, flagged `dq_invalid_missing_key`.
+
 Silver never drops a row for quality. Each broken rule sets a boolean `dq_invalid_<rule>` column,
 `dq_reasons` lists the rules a row breaks (e.g. `["orphan_customers"]`) and `dq_is_valid` is true when it
 breaks none. Gold decides which reasons keep a row out (`EXCLUDE_WHEN` in `silver_to_gold.py`) and

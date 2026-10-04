@@ -48,6 +48,9 @@ FOREIGN_KEYS = [
     ForeignKey("complaints", "origin_interaction_id", "call_center_interactions", "interaction_id", nullable=True),
 ]
 
+# Last day of the dataset (the dictionary's date range). A later timestamp can't be true.
+DATASET_END = "2026-06-17"
+
 # Orphans as a % of the references that can be checked: non-null values, plus nulls where
 # the column is NOT NULL. Above WARN the run logs it; above FAIL the silver job fails.
 ORPHAN_WARN_PCT = 1.0
