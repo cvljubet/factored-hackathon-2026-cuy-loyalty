@@ -52,5 +52,11 @@
   "auth": {
     "loading": "Carregando...",
     "signOut": "Sair"
+  },
+  "profile": {
+    "notLinked": {
+      "title": "Sua conta não está vinculada a um cliente",
+      "description": "Entre em contato com o administrador para vincular sua conta e acessar seus benefícios."
+    }
   }
 }
