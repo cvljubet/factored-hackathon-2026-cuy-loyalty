@@ -6,9 +6,23 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "boto3>=1.43.105",
+    "fastapi>=0.142.2",
     "fg-data-profiling>=4.20.0",
     "ipywidgets>=8.1.9",
     "notebook>=7.6.3",
     "pandas<3",
+    "pydantic-settings>=2.15.0",
+    "pyjwt[crypto]>=2.15.1",
     "tabulate>=0.10.0",
+    "uvicorn[standard]>=0.54.0",
 ]
+
+[dependency-groups]
+dev = [
+    "httpx2>=2.13.1",
+    "pytest>=9.1.1",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["backend"]
+testpaths = ["tests"]
