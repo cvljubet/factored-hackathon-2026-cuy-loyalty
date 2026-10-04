@@ -1,0 +1,26 @@
+# Line endings: store and check out text files with LF on every OS.
+# This overrides each developer's core.autocrlf, so Windows, macOS and CI see
+# identical bytes (Terraform hashes the Glue scripts with filemd5).
+* text=auto eol=lf
+
+# Explicit for files whose bytes feed hashes or tooling
+*.py      text eol=lf
+*.tf      text eol=lf
+*.tfvars  text eol=lf
+*.hcl     text eol=lf
+*.sh      text eol=lf
+
+# Windows-only scripts keep CRLF
+*.bat     text eol=crlf
+*.cmd     text eol=crlf
+
+# Never touch binaries
+*.png     binary
+*.jpg     binary
+*.jpeg    binary
+*.gif     binary
+*.ico     binary
+*.webp    binary
+*.pdf     binary
+*.zip     binary
+*.parquet binary
