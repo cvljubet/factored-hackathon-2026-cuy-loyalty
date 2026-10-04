@@ -34,16 +34,38 @@ The rules themselves live in `dq_rules.py`, which Terraform uploads next to the 
 and the silver job fails when a key has more than 5% orphans (warns above 1%). Tables are built parents
 first for that reason, so with `--tables` the parents must already be in silver.
 
+Table-specific rules (`table_rules.py`, one function per table) add more flags, fill gaps in place
+with a `<column>_imputed` marker (e.g. `was_opened`, `nps_category`, `amount_usd` on USD transactions),
+and derive columns next to the originals (`entities_*`, `income_currency`, campaign name codes). The
+exchange-rate table is completed to every pair and day; more than 3 missing days in a row for a pair
+fails the job. `silver/_rule_report/` also counts imputations (`imputed:<column>`) and lists source
+columns that are empty in every row (`all_null:<column>`, e.g. `complaints.origin_interaction_id`).
+
+Generic rules come from the data contracts in `contracts.py`: one Pandera schema per silver table,
+built from the dictionary (NOT NULL, UNIQUE) and `dq_rules.py` (allowed values, ranges, event dates
+inside the dataset, date order). The same schema flags rows (`required_missing`, `not_allowed`,
+`out_of_range`, `outside_dataset`, `date_order`, `not_unique`), counts failures per column in
+`silver/_rule_report/` (`<kind>:<column>`), and is validated by Pandera on each written table, with
+its findings in `silver/_contract_report/`. `docs/data-contracts.md` is generated from it.
+
+Late arrivals and volumes only warn, in the job log and two reports; they never fail the run.
+Daily tables get `arrival_lag_days` (process_date minus the event's date) and `is_late_arrival` (more
+than `LATE_ARRIVAL_DAYS`, 1); a row processed before its event is flagged
+`dq_invalid_processed_before_event`. `silver/_arrival_report/` has the lag distribution per table.
+`silver/_volume_report/` compares raw rows with the dictionary's counts (`VOLUME_TOLERANCE_PCT`, 20%) and,
+from the `year=/month=/day=` folders, lists days without a file, days with unusual volume (under half or
+over twice the median day) and rows filed under another day than their process_date.
+
 Tests build a small bronze lake with one planted case per rule and run both jobs on it:
 
 ```bash
-uv run --no-project --python 3.11 --with pyspark==3.5.4 --with pytest pytest tests/integration
+uv run --no-project --python 3.11 --with-requirements tests/integration/requirements.txt pytest tests/integration
 ```
 
 Both scripts run unchanged on AWS Glue 5.0 (Spark 3.5) and locally against a folder:
 
 ```bash
-pip install pyspark==3.5.4
+pip install -r tests/integration/requirements.txt  # pyspark 3.5.4, pandera and what it needs
 python data/pipelines/glue/bronze_to_silver.py --lake_bucket /path/to/lake
 python data/pipelines/glue/silver_to_gold.py  --lake_bucket /path/to/lake
 ```

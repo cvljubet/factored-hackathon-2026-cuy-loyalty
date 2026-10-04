@@ -3,6 +3,13 @@
 Reads the raw CSVs under <lake>/bronze/<table>/ingest_date=YYYY-MM-DD/ and writes
 Parquet to <lake>/silver/<table>/, registered in the silver Glue database.
 
+Rules that look at one table live in table_rules.py; the ones comparing tables live here.
+contracts.py holds the generic rules (NOT NULL, allowed values, ranges, dates, uniqueness) as one
+Pandera schema per table: they flag rows here and validate each written table
+(silver/_contract_report/).
+Late arrivals (process_date well after the event) and volumes (rows against the dictionary, days
+without files, unusual days) go to silver/_arrival_report/ and silver/_volume_report/ as warnings;
+they never fail the run.
 Rows are never dropped for quality. Each broken rule sets a dq_invalid_<rule> flag,
 dq_reasons lists the rules a row breaks, and dq_is_valid is true when it breaks none.
 Each run appends failing rows per rule to silver/_rule_report/ and orphans per
@@ -15,6 +22,8 @@ Locally it runs against a folder, without a catalog:
     python bronze_to_silver.py --lake_bucket /path/to/lake [--tables customers,products]
 With --tables, the parents of the selected tables must already be in silver.
 """
+import datetime
+import statistics
 import sys
 from functools import reduce
 from graphlib import TopologicalSorter
@@ -23,7 +32,22 @@ from pyspark.sql import DataFrame, Row, SparkSession, Window
 from pyspark.sql import functions as F
 from pyspark.sql.types import StringType, StructField, StructType
 
-from dq_rules import DATASET_END, FOREIGN_KEYS, ORPHAN_FAIL_PCT, ORPHAN_WARN_PCT
+import contracts
+import table_rules
+from dq_rules import (
+    DAILY_VOLUME_HIGH,
+    DAILY_VOLUME_LOW,
+    DATASET_END,
+    DATASET_START,
+    EVENT_DATES,
+    EXPECTED_ROWS,
+    FOREIGN_KEYS,
+    FX_MAX_FILLED_DAYS,
+    LATE_ARRIVAL_DAYS,
+    ORPHAN_FAIL_PCT,
+    ORPHAN_WARN_PCT,
+    VOLUME_TOLERANCE_PCT,
+)
 
 # Column types follow the LATAM Bank data dictionary. Columns not listed stay strings.
 TABLES = {
@@ -67,6 +91,11 @@ TABLES = {
     },
     "campaign_sends": {
         "pk": ["send_id"],
+        "timestamps": ["send_date", "open_date", "click_date", "conversion_date"],
+        "dates": ["process_date"],
+        "ints": ["click_count"],
+        "decimals": ["conversion_value", "send_cost"],
+        "bools": ["was_delivered", "was_opened", "was_clicked", "had_conversion"],
     },
     "transactions": {
         "pk": ["transaction_id"],
@@ -96,8 +125,8 @@ TABLES = {
         "pk": ["survey_id"],
         "timestamps": ["survey_date"],
         "dates": ["process_date"],
-        "ints": ["main_score"],
-        "doubles": ["response_time_hours"],
+        "ints": ["main_score", "question_1_response", "question_2_response", "question_3_response"],
+        "doubles": ["response_time_hours", "campaign_response_rate"],
     },
     "digital_events": {
         "pk": ["event_id"],
@@ -110,8 +139,11 @@ TABLES = {
     },
     "complaints": {
         "pk": ["complaint_id"],
-        "timestamps": ["creation_date", "assignment_date"],
+        "timestamps": ["creation_date", "assignment_date", "first_response_date", "resolution_date", "closing_date"],
         "dates": ["process_date"],
+        "ints": ["resolution_days", "resolution_satisfaction"],
+        "decimals": ["claimed_amount", "compensation_granted"],
+        "bools": ["sla_breached", "is_repeat_complainer"],
     },
     "daily_exchange_rates": {
         "pk": ["date", "source_currency", "target_currency"],
@@ -200,6 +232,8 @@ COLUMNS = {
     ],
 }
 
+CONTRACTS = contracts.build_all(TABLES, COLUMNS)
+
 NULL_TOKENS = ["", "nan", "NaN", "None", "null", "NULL", "N/A"]
 COUNTRY_FIXES = {"Mexico": "México"}  # transactions mix both spellings
 CURRENCY_COLUMNS = ["currency", "source_currency", "target_currency"]
@@ -214,9 +248,22 @@ DQ_REPORT = (
 )
 DQ_REPORT_DUPLICATES = ["duplicate_keys", "exact_duplicates", "conflicting_keys", "conflicting_duplicates"]
 RULE_REPORT = "table string, rule string, failing_rows long, rows long, failing_pct double"
+ARRIVAL_REPORT = (
+    "table string, rows long, rows_with_lag long, late_rows long, late_pct double, processed_before_event long,"
+    " lag_p50 int, lag_p90 int, lag_p99 int, lag_max int, same_day long, one_day long, two_to_seven_days long,"
+    " eight_to_thirty_days long, over_thirty_days long, status string"
+)
+VOLUME_REPORT = (
+    "table string, raw_rows long, silver_rows long, expected_rows long, vs_expected_pct double, file_days long,"
+    " missing_days long, missing_day_list array<string>, unusual_days array<string>, rows_filed_on_other_day long,"
+    " status string"
+)
+# Daily tables keep the source's year=/month=/day= folders: the day a file was delivered for.
+FILE_DAY = r"year=(\d{4})/month=(\d{2})/day=(\d{2})"
 FK_REPORT = (
     "child_table string, child_column string, parent_table string, parent_column string, nullable boolean,"
-    " child_rows long, null_rows long, checked_rows long, orphan_rows long, orphan_pct double, status string"
+    " child_rows long, null_rows long, checked_rows long, orphan_rows long, orphan_pct double, status string,"
+    " note string"
 )
 
 
@@ -296,23 +343,6 @@ def clean(df: DataFrame, cfg: dict) -> DataFrame:
     return df
 
 
-def add_quality_flags(df: DataFrame, table: str) -> DataFrame:
-    """Flag (don't drop) rows that break the data dictionary's rules."""
-    if table == "satisfaction_surveys":
-        valid = (
-            F.when(F.col("survey_type") == "CSAT", F.col("main_score").between(1, 5))
-            .when(F.col("survey_type") == "NPS", F.col("main_score").between(0, 10))
-            .otherwise(F.lit(True))
-        )
-        df = df.withColumn("dq_invalid_score_out_of_range", ~F.coalesce(valid, F.lit(False)))
-    if table == "customers":
-        df = df.withColumn("dq_invalid_credit_score_out_of_range", ~F.col("credit_score").between(300, 850))
-    if table == "products":
-        # Dictionary lists MXN but the data has none (half the customers are Mexican).
-        df = df.withColumn("dq_invalid_currency", ~F.col("currency").isin("MXN", "COP", "ARS", "USD"))
-    return df
-
-
 def deduplicate(df: DataFrame, table: str, cfg: dict) -> DataFrame:
     """Keep one row per primary key, always the same one, and say what it replaced.
 
@@ -363,8 +393,10 @@ def build_order(tables: list) -> list:
 
 def add_orphan_flags(spark: SparkSession, root: str, df: DataFrame, table: str) -> DataFrame:
     """dq_invalid_orphan_<parent>: the foreign key matches no row of the parent's silver table.
-    A null is an orphan only where the dictionary says NOT NULL."""
+    A null is an orphan only where the dictionary says NOT NULL. Known-broken keys get no flag."""
     for fk in foreign_keys_of(table):
+        if fk.known_broken:
+            continue
         # Parent keys are unique: silver is deduplicated on them, so the join can't add rows.
         keys = read_silver(spark, root, fk.parent).select(
             F.col(fk.parent_column).alias("_parent_key"), F.lit(True).alias("_parent_found")
@@ -379,9 +411,23 @@ def add_orphan_flags(spark: SparkSession, root: str, df: DataFrame, table: str) 
     return df
 
 
-def add_cross_table_flags(spark: SparkSession, root: str, df: DataFrame, table: str) -> DataFrame:
-    """Rows that contradict the parent row they point to. A missing parent doesn't fire these;
-    the orphan flag already covers it."""
+def add_cross_table_flags(spark: SparkSession, root: str, df: DataFrame, table: str, children_built: bool) -> DataFrame:
+    """Rows that contradict the row they point to in another table. A missing parent doesn't fire
+    these; the orphan flag already covers it. Checks against a child table run only once that
+    child is built (children_built)."""
+    if table == "products" and children_built:
+        latest = (
+            read_silver(spark, root, "transactions")
+            .groupBy(F.col("product_id").alias("_txn_product"))
+            .agg(F.max("transaction_date").alias("last_transaction_date_calc"))
+        )
+        recorded, actual = F.to_date("last_transaction_date"), F.to_date("last_transaction_date_calc")
+        # A product without transactions here may have them outside this extract: not flagged.
+        df = (
+            df.join(latest, F.col("product_id") == F.col("_txn_product"), "left")
+            .drop("_txn_product")
+            .withColumn("dq_invalid_last_txn_mismatch", actual.isNotNull() & (recorded.isNull() | (recorded != actual)))
+        )
     if table == "transactions":
         products = read_silver(spark, root, "products").select(
             F.col("product_id").alias("_product_id"),
@@ -406,6 +452,32 @@ def add_cross_table_flags(spark: SparkSession, root: str, df: DataFrame, table: 
             .drop("_interaction_id", "_interaction_customer")
         )
     return df
+
+
+def add_arrival_lag(spark: SparkSession, root: str, df: DataFrame, table: str) -> DataFrame:
+    """arrival_lag_days: days from the event to its process_date. is_late_arrival when that is more
+    than LATE_ARRIVAL_DAYS (late data is still valid data: no flag). Processed before it happened
+    is impossible: dq_invalid_processed_before_event. Transcripts take their interaction's date."""
+    if "process_date" not in df.columns:
+        return df
+    if table == "call_transcripts":
+        dates = read_silver(spark, root, "call_center_interactions").select(
+            F.col("interaction_id").alias("_event_interaction"), F.to_date("interaction_date").alias("_event_day")
+        )
+        df = df.join(F.broadcast(dates), F.col("interaction_id") == F.col("_event_interaction"), "left")
+        df = df.drop("_event_interaction")
+    elif table in EVENT_DATES:
+        df = df.withColumn("_event_day", F.to_date(EVENT_DATES[table]))
+    else:
+        return df
+    lag = F.datediff("process_date", "_event_day")
+    return df.withColumns(
+        {
+            "arrival_lag_days": lag,
+            "is_late_arrival": lag > LATE_ARRIVAL_DAYS,
+            "dq_invalid_processed_before_event": lag < 0,
+        }
+    ).drop("_event_day")
 
 
 def add_validity(df: DataFrame) -> DataFrame:
@@ -434,6 +506,8 @@ def write_silver(df: DataFrame, root: str, db: str, table: str, cfg: dict) -> No
 def table_stats(df: DataFrame, table: str) -> dict:
     """Rows, rows failing each rule and nulls in each foreign key of a written table, in one pass."""
     flags = [c for c in df.columns if c.startswith(FLAG_PREFIX)]
+    imputed = [c for c in df.columns if c.endswith("_imputed")]
+    source_columns = [c for c in COLUMNS[table] if c in df.columns]
     fk_columns = [fk.column for fk in foreign_keys_of(table)]
     return df.agg(
         F.count("*").alias("rows"),
@@ -444,6 +518,8 @@ def table_stats(df: DataFrame, table: str) -> dict:
         F.sum(F.col("dq_versions") - 1).alias("conflicting_duplicates"),
         *[F.count(F.when(F.col(c), 1)).alias(c) for c in flags],
         *[F.count(F.when(F.col(c).isNull(), 1)).alias(f"nulls:{c}") for c in fk_columns],
+        *[F.count(F.when(F.col(c), 1)).alias(f"imputed:{c[: -len('_imputed')]}") for c in imputed],
+        *[F.count(c).alias(f"filled:{c}") for c in source_columns],
     ).first().asDict()
 
 
@@ -451,22 +527,49 @@ def pct(part: int, whole: int) -> float:
     return round(100.0 * part / whole, 3) if whole else 0.0
 
 
-def rule_rows(table: str, stats: dict) -> list:
-    rows = stats["rows"]
-    return [
-        Row(table=table, rule=c[len(FLAG_PREFIX):], failing_rows=n, rows=rows, failing_pct=pct(n, rows))
-        for c, n in stats.items()
-        if c.startswith(FLAG_PREFIX)
-    ]
+def rule_rows(table: str, stats: dict, contract_counts: dict) -> list:
+    """One row per flag (<rule>), per imputed column (imputed:<column>), per source column that is
+    empty in every row (all_null:<column>, reported once instead of row by row) and per contract
+    check (<kind>:<column>)."""
+    rows, out = stats["rows"], []
+    for name, n in [*stats.items(), *contract_counts.items()]:
+        if name.startswith(FLAG_PREFIX):
+            rule = name[len(FLAG_PREFIX):]
+        elif name.startswith("imputed:") or name.split(":")[0] in contracts.KINDS:
+            rule = name
+        elif name.startswith("filled:") and n == 0 and rows:
+            rule, n = f"all_null:{name[len('filled:'):]}", rows
+        else:
+            continue
+        out.append(Row(table=table, rule=rule, failing_rows=n, rows=rows, failing_pct=pct(n, rows)))
+    return out
 
 
-def fk_rows(table: str, stats: dict) -> list:
+def unflagged_orphans(spark: SparkSession, root: str, df: DataFrame, table: str) -> dict:
+    """Non-null values matching no parent, per known-broken key: they have no flag column to count."""
+    counts = {}
+    for fk in foreign_keys_of(table):
+        if fk.known_broken:
+            keys = read_silver(spark, root, fk.parent).select(F.col(fk.parent_column).alias("_parent_key"))
+            values = df.where(F.col(fk.column).isNotNull())
+            unmatched = values.join(F.broadcast(keys), F.col(fk.column) == F.col("_parent_key"), "left_anti")
+            counts[fk.column] = unmatched.count()
+    return counts
+
+
+def fk_rows(table: str, stats: dict, unflagged: dict) -> list:
     rows = []
     for fk in foreign_keys_of(table):
-        nulls, orphans = stats[f"nulls:{fk.column}"], stats[f"dq_invalid_orphan_{fk.parent}"]
+        nulls = stats[f"nulls:{fk.column}"]
+        if fk.known_broken:
+            orphans = unflagged[fk.column] + (0 if fk.nullable else nulls)
+        else:
+            orphans = stats[f"dq_invalid_orphan_{fk.parent}"]
         checked = stats["rows"] - nulls if fk.nullable else stats["rows"]
         orphan_pct = pct(orphans, checked)
-        if checked == 0:
+        if fk.known_broken:
+            status = "known_broken"  # reported, never warns or fails; see dq_rules
+        elif checked == 0:
             status = "not_checkable"  # every value is null, e.g. complaints.origin_interaction_id
         elif orphan_pct > ORPHAN_FAIL_PCT:
             status = "fail"
@@ -487,6 +590,7 @@ def fk_rows(table: str, stats: dict) -> list:
                 orphan_rows=orphans,
                 orphan_pct=orphan_pct,
                 status=status,
+                note=fk.known_broken,
             )
         )
     return rows
@@ -498,14 +602,123 @@ def write_report(spark: SparkSession, root: str, name: str, rows: list, schema: 
     )
 
 
-def check_orphans(fks: list) -> None:
-    """Log foreign keys above the warn threshold; fail the job if any is above the fail one."""
+def arrival_row(df: DataFrame, table: str):
+    """The lag distribution of a written daily table, or None for tables without process_date."""
+    if "arrival_lag_days" not in df.columns:
+        return None
+    lag = F.col("arrival_lag_days")
+    s = df.agg(
+        F.count("*").alias("rows"),
+        F.count(lag).alias("rows_with_lag"),
+        F.count(F.when(F.col("is_late_arrival"), 1)).alias("late_rows"),
+        F.count(F.when(lag < 0, 1)).alias("processed_before_event"),
+        F.percentile_approx(lag, [0.5, 0.9, 0.99]).alias("p"),
+        F.max(lag).alias("lag_max"),
+        F.count(F.when(lag == 0, 1)).alias("same_day"),
+        F.count(F.when(lag == 1, 1)).alias("one_day"),
+        F.count(F.when(lag.between(2, 7), 1)).alias("two_to_seven_days"),
+        F.count(F.when(lag.between(8, 30), 1)).alias("eight_to_thirty_days"),
+        F.count(F.when(lag > 30, 1)).alias("over_thirty_days"),
+    ).first()
+    p50, p90, p99 = s["p"] or [None, None, None]
+    late_pct = pct(s["late_rows"], s["rows_with_lag"])
+    status = "warn" if s["late_rows"] or s["processed_before_event"] else "ok"
+    if status == "warn":
+        print(
+            f"[arrival] warn: {table}: {s['late_rows']} rows ({late_pct}%) processed more than {LATE_ARRIVAL_DAYS}"
+            f" day(s) after the event (p99 {p99} days), {s['processed_before_event']} processed before it"
+        )
+    return Row(
+        table=table, rows=s["rows"], rows_with_lag=s["rows_with_lag"], late_rows=s["late_rows"], late_pct=late_pct,
+        processed_before_event=s["processed_before_event"], lag_p50=p50, lag_p90=p90, lag_p99=p99,
+        lag_max=s["lag_max"], same_day=s["same_day"], one_day=s["one_day"],
+        two_to_seven_days=s["two_to_seven_days"], eight_to_thirty_days=s["eight_to_thirty_days"],
+        over_thirty_days=s["over_thirty_days"], status=status,
+    )
+
+
+def unusual_days(rows_per_day: dict) -> list:
+    """Days with under DAILY_VOLUME_LOW or over DAILY_VOLUME_HIGH x the median day, as "day:rows"."""
+    if not rows_per_day:
+        return []
+    median = statistics.median(rows_per_day.values())
+    return [
+        f"{day}:{n}"
+        for day, n in sorted(rows_per_day.items())
+        if n < DAILY_VOLUME_LOW * median or n > DAILY_VOLUME_HIGH * median
+    ]
+
+
+def volume_row(raw: DataFrame, table: str, raw_rows: int, silver_rows: int) -> Row:
+    """Raw rows against the dictionary and, for daily tables, the days files were delivered for."""
+    expected = EXPECTED_ROWS.get(table)
+    vs_expected = round(100.0 * (raw_rows / expected - 1), 3) if expected else None
+    parts = [F.regexp_extract("_source_file", FILE_DAY, i) for i in (1, 2, 3)]
+    file_day = F.to_date(F.concat_ws("-", *parts))
+    # raw is uncleaned: process_date is still the source's string.
+    elsewhere = F.to_date(F.trim("process_date")) != file_day if "process_date" in raw.columns else F.lit(False)
+    days = (
+        raw.withColumn("_file_day", file_day)
+        .where(F.col("_file_day").isNotNull())
+        .groupBy("_file_day")
+        .agg(F.count("*").alias("n"), F.count(F.when(elsewhere, 1)).alias("elsewhere"))
+        .collect()
+    )
+    missing, unusual, filed_elsewhere = [], [], None
+    if days:  # a daily table
+        start, end = datetime.date.fromisoformat(DATASET_START), datetime.date.fromisoformat(DATASET_END)
+        delivered = {r["_file_day"] for r in days}
+        calendar = (start + datetime.timedelta(days=d) for d in range((end - start).days + 1))
+        missing = [str(day) for day in calendar if day not in delivered]
+        unusual = unusual_days({str(r["_file_day"]): r["n"] for r in days})
+        filed_elsewhere = sum(r["elsewhere"] for r in days)
+    off_expected = vs_expected is not None and abs(vs_expected) > VOLUME_TOLERANCE_PCT
+    status = "warn" if off_expected or missing or unusual or filed_elsewhere else "ok"
+    if off_expected:
+        print(f"[volume] warn: {table}: {raw_rows} rows, {vs_expected}% off the dictionary's {expected}")
+    if missing:
+        print(f"[volume] warn: {table}: no file for {len(missing)} days, e.g. {', '.join(missing[:5])}")
+    if unusual:
+        print(f"[volume] warn: {table}: {len(unusual)} days with unusual volume, e.g. {', '.join(unusual[:5])}")
+    if filed_elsewhere:
+        print(f"[volume] warn: {table}: {filed_elsewhere} rows in a file for another day than their process_date")
+    return Row(
+        table=table, raw_rows=raw_rows, silver_rows=silver_rows, expected_rows=expected,
+        vs_expected_pct=vs_expected, file_days=len(days) if days else None, missing_days=len(missing),
+        missing_day_list=missing, unusual_days=unusual, rows_filed_on_other_day=filed_elsewhere, status=status,
+    )
+
+
+def check_orphans(fks: list) -> list:
+    """Log foreign keys above the warn threshold; return the failure for those above the fail one."""
     for r in fks:
-        if r.status in ("warn", "fail"):
+        if r.status in ("warn", "fail", "known_broken"):
             print(f"[fk] {r.status}: {r.child_table}.{r.child_column} -> {r.parent_table}, {r.orphan_pct}% orphans")
     failed = [f"{r.child_table}.{r.child_column} ({r.orphan_pct}%)" for r in fks if r.status == "fail"]
-    if failed:
-        raise RuntimeError(f"Orphans above {ORPHAN_FAIL_PCT}% in {', '.join(failed)}; see silver/_fk_report/")
+    return [f"Orphans above {ORPHAN_FAIL_PCT}% in {', '.join(failed)}; see silver/_fk_report/"] if failed else []
+
+
+def check_fx_calendar(df: DataFrame) -> list:
+    """The calendar fill is a guard, not a fix: fail if a pair needed more than FX_MAX_FILLED_DAYS
+    consecutive filled days, or has days nothing could fill (no earlier rate)."""
+    pair = Window.partitionBy("source_currency", "target_currency").orderBy("date")
+    last_real = F.last(F.when(~F.col("exchange_rate_imputed"), F.col("date")), ignorenulls=True)
+    runs = (
+        df.where(F.col("date").between(DATASET_START, DATASET_END) & ~F.col("dq_invalid_missing_key"))
+        .withColumn("_filled_run", F.datediff("date", last_real.over(pair.rowsBetween(Window.unboundedPreceding, 0))))
+        .groupBy("source_currency", "target_currency")
+        .agg(
+            F.max("_filled_run").alias("longest_fill"),
+            F.count(F.when(F.col("exchange_rate").isNull(), 1)).alias("unfilled"),
+        )
+        .collect()
+    )
+    bad = [
+        f"{r.source_currency}->{r.target_currency} ({r.longest_fill} days filled in a row, {r.unfilled} unfilled)"
+        for r in runs
+        if (r.longest_fill or 0) > FX_MAX_FILLED_DAYS or r.unfilled
+    ]
+    return [f"Exchange rate gaps in {', '.join(bad)}; see silver/daily_exchange_rates"] if bad else []
 
 
 def main(argv):
@@ -517,20 +730,38 @@ def main(argv):
 
     root = lake_root(args["lake_bucket"])
     selected = [t for t in args["tables"].split(",") if t] or list(TABLES)
-    report, rules, fks = [], [], []
-    for table in build_order(selected):
+    order = build_order(selected)
+    # products' last_transaction_date is checked against transactions, which are built after
+    # products because they point to it: when both run, products is built again at the end.
+    # (With --tables products alone, transactions must already be in silver.)
+    if {"products", "transactions"} <= set(order):
+        order.append("products")
+    report, rules, fks, contract_findings, arrivals, volumes, failures = [], [], [], [], [], [], []
+    for i, table in enumerate(order):
+        final = table not in order[i + 1:]
         cfg = TABLES[table]
         raw = read_bronze(spark, root, table).cache()
-        silver = deduplicate(add_quality_flags(clean(raw, cfg), table), table, cfg)
-        silver = add_cross_table_flags(spark, root, add_orphan_flags(spark, root, silver, table), table)
+        silver = table_rules.apply(deduplicate(clean(raw, cfg), table, cfg), table)
+        silver = contracts.add_flags(silver, CONTRACTS[table])
+        silver = add_cross_table_flags(spark, root, add_orphan_flags(spark, root, silver, table), table, final)
+        silver = add_arrival_lag(spark, root, silver, table)
         silver = add_validity(silver).withColumn("_processed_at", F.current_timestamp())
         write_silver(silver, root, args["silver_db"], table, cfg)
-        stats = table_stats(read_silver(spark, root, table), table)
-        rules += rule_rows(table, stats)
-        fks += fk_rows(table, stats)
+        if not final:
+            raw.unpersist()
+            continue
+        written = read_silver(spark, root, table)
+        if table == "daily_exchange_rates":
+            failures += check_fx_calendar(written)
+        stats = table_stats(written, table)
+        rules += rule_rows(table, stats, contracts.counts(written, CONTRACTS[table]))
+        contract_findings += contracts.validate(written, CONTRACTS[table])
+        fks += fk_rows(table, stats, unflagged_orphans(spark, root, written, table))
         rows_in, rows_out = raw.count(), stats["rows"]
         dups = [stats[k] or 0 for k in DQ_REPORT_DUPLICATES]
         report.append((table, rows_in, rows_out, rows_in - rows_out, *dups))
+        arrivals += [r for r in [arrival_row(written, table)] if r]
+        volumes.append(volume_row(raw, table, rows_in, rows_out))
         raw.unpersist()
         print(
             f"[silver] {table}: {rows_in} raw rows -> {rows_out} rows, {stats['invalid']} not valid;"
@@ -540,7 +771,12 @@ def main(argv):
     write_report(spark, root, "_dq_report", report, DQ_REPORT)
     write_report(spark, root, "_rule_report", rules, RULE_REPORT)
     write_report(spark, root, "_fk_report", fks, FK_REPORT)
-    check_orphans(fks)
+    write_report(spark, root, "_contract_report", contract_findings, contracts.CONTRACT_REPORT)
+    write_report(spark, root, "_arrival_report", arrivals, ARRIVAL_REPORT)
+    write_report(spark, root, "_volume_report", volumes, VOLUME_REPORT)
+    failures = check_orphans(fks) + failures
+    if failures:
+        raise RuntimeError(" | ".join(failures))
 
 
 if __name__ == "__main__":

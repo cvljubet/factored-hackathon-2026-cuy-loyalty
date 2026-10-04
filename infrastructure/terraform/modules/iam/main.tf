@@ -34,9 +34,16 @@ data "aws_iam_policy_document" "glue_s3" {
   }
 
   statement {
-    sid       = "ReadWriteSilverGold"
-    actions   = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"]
-    resources = ["${var.lake_bucket_arn}/silver/*", "${var.lake_bucket_arn}/gold/*"]
+    sid     = "ReadWriteSilverGold"
+    actions = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"]
+    resources = [
+      "${var.lake_bucket_arn}/silver/*",
+      "${var.lake_bucket_arn}/gold/*",
+      # Glue's S3 connector writes a "<prefix>_$folder$" marker at the bucket root when the
+      # silver/ or gold/ placeholder object is missing (e.g. after clearing the prefix).
+      "${var.lake_bucket_arn}/silver_$folder$",
+      "${var.lake_bucket_arn}/gold_$folder$",
+    ]
   }
 
   statement {

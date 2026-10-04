@@ -20,7 +20,13 @@ locals {
     "--spark-event-logs-path"            = "s3://${var.artifacts_bucket}/spark-logs/"
     "--TempDir"                          = "s3://${var.artifacts_bucket}/tmp/"
     "--job-language"                     = "python"
-    "--extra-py-files"                   = "s3://${var.artifacts_bucket}/${aws_s3_object.dq_rules.key}"
+    "--extra-py-files" = join(",", [
+      "s3://${var.artifacts_bucket}/${aws_s3_object.dq_rules.key}",
+      "s3://${var.artifacts_bucket}/${aws_s3_object.table_rules.key}",
+      "s3://${var.artifacts_bucket}/${aws_s3_object.contracts.key}",
+    ])
+    # Plain pandera, not pandera[pyspark]: that extra would install its own pyspark over Glue's.
+    "--additional-python-modules" = "pandera==0.33.1"
   }
 }
 
@@ -32,12 +38,26 @@ resource "aws_s3_object" "script" {
   source_hash = filemd5(each.value)
 }
 
-# Rules module the jobs import; --extra-py-files puts it on their Python path.
+# Rules modules the jobs import; --extra-py-files puts them on their Python path.
 resource "aws_s3_object" "dq_rules" {
   bucket      = var.artifacts_bucket
   key         = "glue-scripts/dq_rules.py"
   source      = "${var.scripts_dir}/dq_rules.py"
   source_hash = filemd5("${var.scripts_dir}/dq_rules.py")
+}
+
+resource "aws_s3_object" "table_rules" {
+  bucket      = var.artifacts_bucket
+  key         = "glue-scripts/table_rules.py"
+  source      = "${var.scripts_dir}/table_rules.py"
+  source_hash = filemd5("${var.scripts_dir}/table_rules.py")
+}
+
+resource "aws_s3_object" "contracts" {
+  bucket      = var.artifacts_bucket
+  key         = "glue-scripts/contracts.py"
+  source      = "${var.scripts_dir}/contracts.py"
+  source_hash = filemd5("${var.scripts_dir}/contracts.py")
 }
 
 resource "aws_glue_job" "this" {

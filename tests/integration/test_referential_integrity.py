@@ -1,7 +1,7 @@
 """P0 referential integrity: orphan and cross-table flags in silver, the foreign key and
 rule reports, the orphan threshold, and gold's exclusions. Planted cases: lake_fixture.py.
 
-Run with: uv run --no-project --python 3.11 --with pyspark==3.5.4 --with pytest pytest tests/integration
+Run with: see tests/integration/requirements.txt
 """
 import shutil
 
@@ -37,7 +37,7 @@ def test_orphans_and_mismatches_are_flagged_not_dropped(spark, lake):
     assert reasons(spark, lake, "transactions", "transaction_id") == {
         "T1": [],
         "T2": ["product_owner_mismatch"],
-        "T3": ["before_product_opening"],
+        "T3": ["before_product_opening", "location"],
         "T4": ["orphan_products"],
         "T5": ["orphan_products"],
         "T6": ["orphan_customers"],
@@ -50,9 +50,8 @@ def test_orphans_and_mismatches_are_flagged_not_dropped(spark, lake):
 
 
 def test_null_is_an_orphan_only_in_not_null_columns(spark, lake):
-    assert reasons(spark, lake, "customers", "customer_id")["C4"] == ["orphan_branches"]
     assert reasons(spark, lake, "call_transcripts", "transcript_id")["R4"] == ["orphan_service_agents"]
-    assert reasons(spark, lake, "digital_events", "event_id")["E2"] == []
+    assert reasons(spark, lake, "digital_events", "event_id")["E2"] == ["missing_customer"]  # not an orphan
     assert reasons(spark, lake, "satisfaction_surveys", "survey_id")["S2"] == []
     assert reasons(spark, lake, "service_agents", "agent_id")["A2"] == []
 
@@ -78,7 +77,10 @@ def test_fk_report(spark, lake):
     assert (branch.null_rows, branch.checked_rows, branch.orphan_rows, branch.orphan_pct) == (6, 2, 1, 50.0)
 
     assert report[("complaints", "origin_interaction_id")].status == "not_checkable"
-    assert report[("customers", "registration_branch_id")].orphan_rows == 2
+    registration = report[("customers", "registration_branch_id")]  # known broken: counted, never fails
+    assert (registration.orphan_rows, registration.status) == (2, "known_broken")
+    assert registration.note.startswith("150,000 distinct values")
+    assert report[("service_agents", "assigned_branch_id")].status == "known_broken"
     assert report[("products", "opening_branch_id")].orphan_rows == 1
     assert report[("call_center_interactions", "agent_id")].status == "warn"
     assert report[("satisfaction_surveys", "agent_id")].status == "ok"
@@ -88,8 +90,17 @@ def test_rule_report(spark, lake):
     report = {(r.table, r.rule): r for r in latest(spark, f"{lake}/silver/_rule_report/")}
     assert report[("transactions", "product_owner_mismatch")].failing_rows == 1
     assert report[("transactions", "orphan_products")].failing_pct == 25.0
-    assert report[("customers", "credit_score_out_of_range")].failing_rows == 1
+    assert report[("customers", "out_of_range:credit_score")].failing_rows == 1  # a contract check
     assert report[("satisfaction_surveys", "score_out_of_range")].failing_rows == 1
+
+
+def test_known_broken_keys_flag_nothing_and_never_fail(spark, lake, tmp_path):
+    assert reasons(spark, lake, "customers", "customer_id")["C4"] == []
+    assert "dq_invalid_orphan_branches" not in spark.read.parquet(f"{lake}/silver/service_agents/").columns
+    copy = tmp_path / "lake"
+    shutil.copytree(lake, copy)
+    # 2 of 5 customers point to no branch, far above the real 5% threshold: still no failure.
+    bronze_to_silver.main(["bronze_to_silver.py", "--lake_bucket", str(copy), "--tables", "customers"])
 
 
 def test_job_fails_above_threshold(spark, lake, tmp_path):

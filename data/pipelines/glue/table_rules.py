@@ -18,6 +18,7 @@ from dq_rules import (
     CURRENCIES,
     DATASET_END,
     DATASET_START,
+    DROPPED_COLUMNS,
     FX_TOLERANCE,
     HOME_CURRENCY,
     NPS_CATEGORIES,
@@ -58,21 +59,18 @@ def call_center_interactions(df: DataFrame) -> DataFrame:
     # reason_category repeats contact_reason value for value; gold reads contact_reason.
     email = (F.col("interaction_type") == "Email") | (F.col("channel") == "Email")
     missing = F.col("duration_seconds").isNull() & ~F.coalesce(email, F.lit(False))
-    return df.drop("reason_category").withColumn("dq_invalid_missing_duration", missing)
+    return df.drop(*DROPPED_COLUMNS["call_center_interactions"]).withColumn("dq_invalid_missing_duration", missing)
 
 
 def call_transcripts(df: DataFrame) -> DataFrame:
     """mentioned_entities is JSON such as {"account_numbers": 1, "dates": 0, "amounts": 2,
-    "products": "Cuenta Ahorro"}; its fields become entities_* columns."""
+    "products": "Cuenta Ahorro"}; its fields become entities_* columns. A missing duration_seconds
+    (NOT NULL in the dictionary) is flagged by the contract, as required_missing."""
     parsed = F.from_json("mentioned_entities", ENTITIES_SCHEMA, {"columnNameOfCorruptRecord": "_corrupt"})
     df = df.withColumn("_entities", parsed)
     for field in ("account_numbers", "dates", "amounts", "products"):
         df = df.withColumn(f"entities_{field}", F.col(f"_entities.{field}"))
-    return (
-        df.withColumn("dq_invalid_entities_json", F.col("_entities._corrupt").isNotNull())
-        .withColumn("dq_invalid_missing_duration", F.col("duration_seconds").isNull())
-        .drop("_entities")
-    )
+    return df.withColumn("dq_invalid_entities_json", F.col("_entities._corrupt").isNotNull()).drop("_entities")
 
 
 def campaign_sends(df: DataFrame) -> DataFrame:
@@ -89,8 +87,7 @@ def customers(df: DataFrame) -> DataFrame:
     after_end = F.to_date("last_updated") > end
     registration = (F.to_date("registration_date") > end) | (F.col("registration_date") > F.col("last_updated"))
     return (
-        df.withColumn("dq_invalid_credit_score_out_of_range", ~F.col("credit_score").between(300, 850))
-        .withColumn("dq_invalid_last_updated_after_cutoff", after_end)
+        df.withColumn("dq_invalid_last_updated_after_cutoff", after_end)
         # The timestamp to trust: deduplication already ignores dates after the cut-off.
         .withColumn("last_updated_clean", F.when(~after_end, F.col("last_updated")))
         .withColumn("dq_invalid_registration_date", registration)
@@ -237,8 +234,6 @@ def products(df: DataFrame) -> DataFrame:
 
     return df.withColumns(
         {
-            # Dictionary lists MXN but the data has none (half the customers are Mexican).
-            "dq_invalid_currency": ~F.col("currency").isin(*CURRENCIES),
             "dq_invalid_incomplete_credit_terms": missing(CREDIT_TERMS),
             "dq_invalid_missing_expiration_date": missing(["expiration_date"]),
         }

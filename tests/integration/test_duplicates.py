@@ -1,7 +1,7 @@
 """P0 duplicates: one deterministic winner per key, exact vs conflicting duplicates reported,
 rows without a key kept and flagged. Planted cases: lake_fixture.py.
 
-Run with: uv run --no-project --python 3.11 --with pyspark==3.5.4 --with pytest pytest tests/integration
+Run with: see tests/integration/requirements.txt
 """
 import datetime
 

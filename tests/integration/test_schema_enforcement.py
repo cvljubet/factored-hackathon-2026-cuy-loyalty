@@ -1,6 +1,6 @@
 """Schema enforcement: every bronze file's header must be COLUMNS[table], same names, same order.
 
-Run with: uv run --no-project --python 3.11 --with pyspark==3.5.4 --with pytest pytest tests/integration
+Run with: see tests/integration/requirements.txt
 """
 import shutil
 
@@ -25,6 +25,8 @@ def test_columns_cover_every_table():
 
 def test_silver_keeps_every_dictionary_column(spark, lake):
     for table, columns in COLUMNS.items():
+        if table == "call_center_interactions":  # a copy of contact_reason, dropped on purpose
+            columns = [c for c in columns if c != "reason_category"]
         silver = spark.read.parquet(f"{lake}/silver/{table}/").columns
         assert [c for c in silver if c in columns] == columns, table
         assert "ingest_date" in silver, table

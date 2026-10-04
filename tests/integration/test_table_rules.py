@@ -1,6 +1,6 @@
 """P1 table-specific rules, numbered as in the data quality plan. Planted cases: lake_fixture.py.
 
-Run with: uv run --no-project --python 3.11 --with pyspark==3.5.4 --with pytest pytest tests/integration
+Run with: see tests/integration/requirements.txt
 """
 import datetime
 import shutil
@@ -20,7 +20,7 @@ def silver(spark, lake, table):
 
 def test_1_branch_locations(spark, lake):
     flagged = reasons(spark, lake, "branches", "branch_id")
-    assert flagged == {"B1": [], "B2": ["location"], "B3": ["location"]}
+    assert flagged == {"B1": [], "B2": ["location", "not_unique"], "B3": ["location", "not_unique"]}
 
 
 def test_2_interactions_drop_reason_category_and_flag_missing_duration(spark, lake):
@@ -35,8 +35,9 @@ def test_3_transcript_entities(spark, lake):
     assert (r1.entities_account_numbers, r1.entities_dates, r1.entities_amounts, r1.entities_products) == (
         1, 0, 2, "Cuenta Ahorro"
     )
+    # The missing duration is the contract's: duration_seconds is NOT NULL for transcripts.
     assert reasons(spark, lake, "call_transcripts", "transcript_id")["R2"] == [
-        "entities_json", "missing_duration", "orphan_call_center_interactions"
+        "entities_json", "orphan_call_center_interactions", "required_missing"
     ]
 
 
@@ -58,7 +59,7 @@ def test_5_an_empty_source_column_is_reported_once(spark, lake):
 def test_6_customers(spark, lake):
     flagged = reasons(spark, lake, "customers", "customer_id")
     assert flagged["C3"] == ["last_updated_after_cutoff"]
-    assert flagged["C5"] == ["credit_score_out_of_range", "registration_date"]
+    assert flagged["C5"] == ["out_of_range", "registration_date"]  # credit score 900: a contract range
     c3 = silver_row(spark, lake, "customers", "customer_id = 'C3'")
     assert c3.last_updated_clean is None and c3.last_updated is not None
     assert silver_row(spark, lake, "customers", "customer_id = 'C1'").income_currency == "COP"
@@ -109,7 +110,8 @@ def test_9_campaign_names(spark, lake):
     m4 = silver_row(spark, lake, "marketing_campaigns", "campaign_id = 'M4'")
     assert (m4.campaign_objective, m4.promoted_product, m4.description) == ("Cross-sell", None, None)
     flagged = reasons(spark, lake, "marketing_campaigns", "campaign_id")
-    assert flagged == {"M1": [], "M2": ["name_mismatch"], "M3": ["campaign_name"], "M4": []}
+    # M3's objective can't be filled from an unknown code, and campaign_objective is NOT NULL.
+    assert flagged == {"M1": [], "M2": ["name_mismatch"], "M3": ["campaign_name", "required_missing"], "M4": []}
 
 
 def test_10_products(spark, lake):
