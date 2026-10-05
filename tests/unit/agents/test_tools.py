@@ -12,7 +12,7 @@ from agent_testkit import (
     CUSTOMER_ID,
     OTHER_CUSTOMER_ID,
     FixedRecommendationProvider,
-    RecordingProfileSource,
+    RecordingServing,
     ScriptedModel,
     answer,
     call_tool,
@@ -20,11 +20,8 @@ from agent_testkit import (
     make_deps,
 )
 
-NOT_READY_TOOLS = sorted(set(TOOL_NAMES) - {"get_my_profile", "recommend_products"})
-
-
 def run(script: ScriptedModel, profiles=None, recommendations=None, customer_id=CUSTOMER_ID):
-    profiles = profiles or RecordingProfileSource()
+    profiles = profiles or RecordingServing()
     engine = InquiryEngine(script.model, profiles, recommendations or NotReadyRecommendationProvider())
     return engine.handle(make_context(customer_id), "pregunta"), profiles
 
@@ -69,7 +66,7 @@ class TestToolDefinitions:
 
 class TestGetMyProfile:
     def test_returns_the_context_customers_profile(self):
-        profiles = RecordingProfileSource()
+        profiles = RecordingServing()
 
         result = tools.get_my_profile(make_deps(profiles))
 
@@ -98,7 +95,7 @@ class TestGetMyProfile:
         assert "extra_forbidden" in str(retry.content)
 
     def test_unknown_customer_is_unavailable_not_invented(self):
-        result = tools.get_my_profile(make_deps(RecordingProfileSource({})))
+        result = tools.get_my_profile(make_deps(RecordingServing({})))
 
         assert (result.status, result.data, result.reason) == ("unavailable", None, "profile_not_found")
 
@@ -107,7 +104,7 @@ class TestGetMyProfile:
 
     def test_a_failing_source_becomes_an_error_result(self):
         class BrokenProfiles:
-            def get_profile(self, customer_id):
+            def get_profile(self, customer_id, fields=None):
                 raise RuntimeError("store down")
 
         result = tools.get_my_profile(make_deps(BrokenProfiles()))
@@ -116,17 +113,6 @@ class TestGetMyProfile:
 
 
 class TestUnavailableTools:
-    @pytest.mark.parametrize("name", NOT_READY_TOOLS)
-    def test_reports_not_ready_without_data(self, name):
-        script = ScriptedModel([call_tool(name), answer("No disponible.")])
-
-        result, profiles = run(script)
-
-        [returned] = tool_returns(script)
-        assert returned.content == tools.ToolResult(tool=name, status="unavailable", reason="data_source_not_ready")
-        assert result.status == "answered"
-        assert profiles.requested_ids == []
-
     def test_recommend_products_is_unavailable_until_the_model_exists(self):
         result = tools.recommend_products(make_deps())
 
@@ -134,14 +120,14 @@ class TestUnavailableTools:
 
     def test_every_tool_runs_without_a_customer_argument(self):
         """Pydantic AI's TestModel calls every registered tool with schema-valid arguments."""
-        profiles = RecordingProfileSource()
+        profiles = RecordingServing()
         engine = InquiryEngine(TestModel(call_tools="all"), profiles, NotReadyRecommendationProvider())
 
         result = engine.handle(make_context(), "todo")
 
         assert result.status == "answered"
         assert set(result.tools_called) == set(TOOL_NAMES)
-        assert profiles.requested_ids == [CUSTOMER_ID]
+        assert set(profiles.requested_ids) == {CUSTOMER_ID}
 
 
 class TestModelMistakes:

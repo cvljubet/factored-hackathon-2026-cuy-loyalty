@@ -26,7 +26,7 @@ os.environ.update(
 )
 
 from app.auth import CognitoTokenVerifier, get_token_verifier  # noqa: E402
-from app.customers.dependencies import get_customer_repository  # noqa: E402
+from app.customers.dependencies import RepositoryProfileSource, get_customer_repository, get_serving_repository  # noqa: E402
 from app.customers.models import Customer  # noqa: E402
 from app.customers.repository import InMemoryCustomerRepository  # noqa: E402
 from app.main import app  # noqa: E402
@@ -138,6 +138,8 @@ def customer_repository() -> RecordingCustomerRepository:
 def client(verifier: CognitoTokenVerifier, customer_repository: RecordingCustomerRepository):
     app.dependency_overrides[get_token_verifier] = lambda: verifier
     app.dependency_overrides[get_customer_repository] = lambda: customer_repository
+    # SERVING_BACKEND=memory over the recording repository, for GET /me/profile.
+    app.dependency_overrides[get_serving_repository] = lambda: RepositoryProfileSource(customer_repository)
     yield TestClient(app)
     app.dependency_overrides.clear()
 

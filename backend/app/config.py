@@ -23,6 +23,15 @@ class Settings(BaseSettings):
     # Where customer records are served from; "memory" is synthetic data until DynamoDB exists.
     customer_repository: Literal["memory"] = "memory"
 
+    # Where the agent's tools read customer and reference data: "dynamodb" is the customer-serving
+    # table; "memory" serves only the synthetic profiles above, with no other data.
+    serving_backend: Literal["memory", "dynamodb"] = "memory"
+    serving_table_name: str = "cuy-loyalty-dev-customer-serving"
+    serving_aws_region: str = "us-east-2"
+    # Optional named AWS profile for the serving table only (locally: the team account's profile).
+    # Unset: the default chain (the ECS task role). Independent of BEDROCK_PROFILE.
+    serving_aws_profile: str | None = None
+
     # Chat agent models. "local" is a deterministic stand-in that needs no AWS access;
     # "bedrock" runs Bedrock Converse via Pydantic AI.
     agent_llm: Literal["local", "bedrock"] = "local"

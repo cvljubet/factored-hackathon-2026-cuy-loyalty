@@ -16,7 +16,7 @@ from agents.models import (
     bedrock_router_model,
     bedrock_runtime_client,
 )
-from agent_testkit import RecordingProfileSource, make_context
+from agent_testkit import RecordingServing, make_context
 
 
 @pytest.fixture
@@ -50,7 +50,7 @@ def test_router_model_is_haiku(offline_client):
 def test_bedrock_requests_are_blocked_in_tests(offline_client):
     """ALLOW_MODEL_REQUESTS=False (agent_testkit) stops a real call; the turn fails safely instead."""
     model = bedrock_inquiry_model(BedrockConfig(region="us-east-2"), offline_client)
-    engine = InquiryEngine(model, RecordingProfileSource(), NotReadyRecommendationProvider())
+    engine = InquiryEngine(model, RecordingServing(), NotReadyRecommendationProvider())
 
     result = engine.handle(make_context(), "hola")
 

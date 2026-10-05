@@ -8,7 +8,7 @@ from agents.sessions import MAX_TURNS, InMemorySessionStore
 from agent_testkit import (
     CUSTOMER_ID,
     OTHER_CUSTOMER_ID,
-    RecordingProfileSource,
+    RecordingServing,
     ScriptedModel,
     answer,
     call_tool,
@@ -24,7 +24,7 @@ class Harness:
         self.model = ScriptedModel(steps)
         self.handoffs = InMemoryHandoffStore()
         self.orchestrator = build_orchestrator(
-            profiles=RecordingProfileSource(),
+            serving=RecordingServing(),
             model=self.model.model,
             handoffs=self.handoffs,
             sessions=InMemorySessionStore(),
@@ -138,9 +138,10 @@ class TestHandoffRecord:
         assert customer_turns == ["¿Cuál es mi saldo?", "¿Y mis productos?"]
 
     def test_unavailable_tool_results_are_not_recorded_as_facts(self):
-        harness = Harness([call_tool("get_my_products"), answer("Aún no disponible.")])
+        # The test profiles have no relationship agent, so get_my_agent is unavailable.
+        harness = Harness([call_tool("get_my_agent"), answer("Aún no disponible.")])
 
-        harness.say("¿Qué productos tengo?")
+        harness.say("¿Quién es mi ejecutivo?")
         harness.say("Quiero hablar con un asesor")
 
         assert harness.only_handoff.verified_facts == ()

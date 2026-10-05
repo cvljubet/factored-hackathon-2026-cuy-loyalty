@@ -1,0 +1,4 @@
+# What load_customer_serving.py runs with:
+#   uv run --no-project --with-requirements data/pipelines/serving/requirements.txt python data/pipelines/serving/load_customer_serving.py --help
+boto3>=1.35
+pyarrow>=17

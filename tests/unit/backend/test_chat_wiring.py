@@ -7,7 +7,9 @@ from agents.guardrails import BedrockGuardrail, NoOpGuardrail
 from agents.model_router import HybridRouter
 from agents.models import bedrock_runtime_client
 from agents.routing import RuleBasedRouter
+from agents.serving import DynamoServingRepository
 from app.chat.dependencies import bedrock_config, build_guardrail, build_inquiry_model, build_router, uses_bedrock
+from app.customers.dependencies import RepositoryProfileSource, build_serving
 from app.config import Settings
 
 BASE = {"cognito_region": "us-east-2", "cognito_user_pool_id": "us-east-2_x", "cognito_app_client_id": "c"}
@@ -80,3 +82,73 @@ def test_bedrock_settings_reach_the_client():
 
     assert model.client.meta.config.read_timeout == 9
     assert model.client.meta.config.retries["total_max_attempts"] == 1
+
+
+def test_serving_defaults_to_memory_without_aws():
+    assert isinstance(build_serving(settings()), RepositoryProfileSource)
+
+
+def test_dynamodb_serving_settings_reach_the_table():
+    serving = build_serving(settings(serving_backend="dynamodb", serving_table_name="t-1", serving_aws_region="us-west-2"))
+
+    assert isinstance(serving, DynamoServingRepository)
+    assert (serving.table.name, serving.table.meta.client.meta.region_name) == ("t-1", "us-west-2")
+
+
+@pytest.fixture
+def three_profiles(tmp_path, monkeypatch):
+    """An AWS config with one profile per account, and a global AWS_PROFILE naming a third."""
+    config = tmp_path / "config"
+    config.write_text(
+        "".join(
+            f"[profile {name}]\naws_access_key_id = {key}\naws_secret_access_key = secret\nregion = us-east-2\n"
+            for name, key in [("model-account", "AKIDBEDROCK"), ("team-account", "AKIDTEAM"), ("global", "AKIDGLOBAL")]
+        )
+    )
+    monkeypatch.setenv("AWS_CONFIG_FILE", str(config))
+    monkeypatch.setenv("AWS_PROFILE", "global")
+    monkeypatch.delenv("AWS_ACCESS_KEY_ID")
+    monkeypatch.delenv("AWS_SECRET_ACCESS_KEY")
+
+
+def access_key(client) -> str:
+    return client._request_signer._credentials.get_frozen_credentials().access_key
+
+
+def test_bedrock_and_dynamodb_use_their_own_profiles(three_profiles):
+    both = settings(agent_llm="bedrock", bedrock_profile="model-account",
+                    serving_backend="dynamodb", serving_aws_profile="team-account")
+
+    bedrock = bedrock_runtime_client(bedrock_config(both))
+    serving = build_serving(both)
+
+    assert access_key(bedrock) == "AKIDBEDROCK"
+    assert access_key(serving.table.meta.client) == "AKIDTEAM"
+
+
+def test_without_a_serving_profile_dynamodb_takes_the_default_chain_not_the_bedrock_profile(three_profiles):
+    serving = build_serving(settings(bedrock_profile="model-account", serving_backend="dynamodb"))
+
+    # The default chain here is AWS_PROFILE; in ECS it is the task role.
+    assert access_key(serving.table.meta.client) == "AKIDGLOBAL"
+
+
+def test_serving_settings_leave_bedrock_credentials_alone():
+    without = settings(agent_llm="bedrock", bedrock_profile="bedrock")
+    with_serving = settings(agent_llm="bedrock", bedrock_profile="bedrock", serving_backend="dynamodb",
+                            serving_table_name="cuy-loyalty-dev-customer-serving", serving_aws_region="us-east-2")
+
+    assert bedrock_config(with_serving) == bedrock_config(without)
+    assert bedrock_config(with_serving).profile == "bedrock"
+
+
+def test_ecs_style_config_gives_bedrock_its_profile_and_dynamodb_the_default_chain(tmp_path, monkeypatch):
+    """As docker-entrypoint.sh writes it in ECS: only [profile bedrock], no default profile."""
+    config = tmp_path / "config"
+    config.write_text("[profile bedrock]\naws_access_key_id = AKIDBEDROCK\naws_secret_access_key = s\n")
+    monkeypatch.setenv("AWS_CONFIG_FILE", str(config))
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "AKIDTASKROLE")  # stands in for the task role's credentials
+    ecs = settings(agent_llm="bedrock", bedrock_profile="bedrock", serving_backend="dynamodb")
+
+    assert access_key(bedrock_runtime_client(bedrock_config(ecs))) == "AKIDBEDROCK"
+    assert access_key(build_serving(ecs).table.meta.client) == "AKIDTASKROLE"

@@ -92,6 +92,22 @@ output "frontend_https_url" {
   value = "https://${module.frontend_site.domain_name}"
 }
 
+output "customer_serving_table_name" {
+  value = module.customer_serving.table_name
+}
+
+output "customer_serving_table_arn" {
+  value = module.customer_serving.table_arn
+}
+
+output "conversations_table_name" {
+  value = module.conversations.table_name
+}
+
+output "conversations_table_arn" {
+  value = module.conversations.table_arn
+}
+
 output "backend_agent_llm" {
   description = "bedrock, or local when bedrock_enabled = false."
   value       = local.agent_environment["AGENT_LLM"]

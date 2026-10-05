@@ -29,7 +29,11 @@ Copy `.env.example` (repo root) to `.env` and fill in the Cognito values from
 | `COGNITO_APP_CLIENT_ID` | SPA app client ID; ID tokens must have it as `aud` |
 | `COGNITO_JWKS_CACHE_SECONDS` | Optional, default 3600 |
 | `CORS_ALLOW_ORIGINS` | Optional JSON list, default `["http://localhost:5173"]` |
-| `CUSTOMER_REPOSITORY` | Optional, default `memory` (synthetic data); DynamoDB comes later |
+| `CUSTOMER_REPOSITORY` | Optional, default `memory` (synthetic data) for `GET /me/profile`; DynamoDB comes later |
+| `SERVING_BACKEND` | Optional: `memory` (default; synthetic profiles only, no other data) or `dynamodb` (the customer-serving table) for the agent's tools |
+| `SERVING_TABLE_NAME` | Optional, default `cuy-loyalty-dev-customer-serving` |
+| `SERVING_AWS_REGION` | Optional, default `us-east-2` |
+| `SERVING_AWS_PROFILE` | Optional AWS profile used **only** for the serving table (locally the team account's, e.g. `cuy-loyalty`); unset uses the default chain (the ECS task role). Independent of `BEDROCK_PROFILE` |
 | `AGENT_LLM` | Optional: `local` (default, deterministic stand-in, no AWS) or `bedrock` (Converse via Pydantic AI) |
 | `AGENT_ROUTER` | Optional: `rules` (default) or `bedrock` (Haiku structured output OR-ed with the deterministic checks) |
 | `BEDROCK_REGION` | Optional, default `us-east-2`; credentials come from the standard AWS chain |

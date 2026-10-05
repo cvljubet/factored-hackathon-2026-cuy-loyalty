@@ -32,9 +32,10 @@ orchestration stays plain application code.
 | Path | Contents |
 | --- | --- |
 | `context.py` | `AgentContext` (trusted identity, language, session, failure count) |
-| `deps.py` | `AgentDeps`, the Pydantic AI dependency container; `ProfileSource` |
+| `deps.py` | `AgentDeps`, the Pydantic AI dependency container |
+| `serving.py` | `ServingRepository`: the DynamoDB customer-serving table (`DynamoServingRepository`) or the in-memory stand-in |
 | `inquiry_agent.py` | The Pydantic AI `Agent` and its customer-scoped tool registrations |
-| `tools.py` | Tool domain logic and `ToolResult`; unfinished tools report `unavailable` |
+| `tools.py` | Tool domain logic and `ToolResult`; `public()` strips keys and `bk_` fields from every result |
 | `engines/` | Inquiry (runs the agent), recommendation (and its payload contract), escalation with handoff store |
 | `routing.py` | `Router` protocol, `RouteResult`, `RuleBasedRouter` (default) |
 | `model_router.py` | `ModelRouter` (structured output) and `HybridRouter` (model + deterministic checks); `AGENT_ROUTER=bedrock` |
@@ -49,6 +50,7 @@ orchestration stays plain application code.
   customer parameter (registration refuses one), and Pydantic AI rejects any
   argument a tool does not declare, so the model cannot pass or change `customer_id`.
 - Recommendation payloads for any customer other than the context's are refused.
-- Unfinished tools return `{"status": "unavailable"}`; nothing is invented.
+- A tool with no data returns `{"status": "unavailable"}` or an empty list; nothing is invented.
+- Tool results never carry `PK`, `SK`, `customer_id` or `bk_` fields (`tools.public`).
 - Tests set `pydantic_ai.models.ALLOW_MODEL_REQUESTS = False` and dummy AWS credentials
   (`tests/unit/conftest.py`), so no test can reach Bedrock; the guardrail is tested with botocore's `Stubber`.

@@ -1,6 +1,6 @@
 """Shared fakes for the agents tests (synthetic data only, no model access)."""
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
 
 from pydantic_ai import models
@@ -11,6 +11,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from agents.context import AgentContext, Language
 from agents.deps import AgentDeps
 from agents.engines.recommendation import NotReadyRecommendationProvider, RecommendationPayload, RecommendationProvider
+from agents.serving import InMemoryServingRepository
 
 # Any attempt to reach a real model (e.g. Bedrock) fails the test instead of calling AWS.
 models.ALLOW_MODEL_REQUESTS = False
@@ -38,14 +39,20 @@ PROFILES = {
 }
 
 
-class RecordingProfileSource:
-    def __init__(self, profiles: Mapping[str, Mapping[str, Any]] = PROFILES):
-        self.profiles = profiles
+class RecordingServing(InMemoryServingRepository):
+    """In-memory serving data that records which customer every customer lookup was for."""
+
+    def __init__(self, profiles: Mapping[str, Mapping[str, Any]] = PROFILES, **data: Any):
+        super().__init__(profiles, **data)
         self.requested_ids: list[str] = []
 
-    def get_profile(self, customer_id: str) -> Mapping[str, Any] | None:
+    def get_profile(self, customer_id: str, fields: Sequence[str] | None = None) -> Mapping[str, Any] | None:
         self.requested_ids.append(customer_id)
-        return self.profiles.get(customer_id)
+        return super().get_profile(customer_id, fields)
+
+    def _events(self, kind: str, customer_id: str, limit: int) -> list[dict[str, Any]]:
+        self.requested_ids.append(customer_id)
+        return super()._events(kind, customer_id, limit)
 
 
 class FixedRecommendationProvider:
@@ -84,13 +91,13 @@ def make_context(customer_id: str = CUSTOMER_ID, language: Language = "es", fail
 
 
 def make_deps(
-    profiles: RecordingProfileSource | None = None,
+    serving: Any = None,
     recommendations: RecommendationProvider | None = None,
     **context: Any,
 ) -> AgentDeps:
     return AgentDeps(
         context=make_context(**context),
-        profiles=profiles or RecordingProfileSource(),
+        serving=serving or RecordingServing(),
         recommendations=recommendations or NotReadyRecommendationProvider(),
     )
 

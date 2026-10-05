@@ -72,61 +72,61 @@ def get_my_profile(ctx: RunContext[AgentDeps]) -> ToolResult:
 def get_my_products(ctx: RunContext[AgentDeps]) -> ToolResult:
     """The signed-in customer's products (accounts, cards, loans) and their status."""
     _check_round(ctx)
-    return tools.not_ready("get_my_products")
+    return tools.get_my_products(ctx.deps)
 
 
 @_customer_scoped_tool
 def get_my_agent(ctx: RunContext[AgentDeps]) -> ToolResult:
     """The signed-in customer's assigned relationship agent."""
     _check_round(ctx)
-    return tools.not_ready("get_my_agent")
+    return tools.get_my_agent(ctx.deps)
 
 
 @_customer_scoped_tool
 def get_my_spending(
     ctx: RunContext[AgentDeps], months: Annotated[int, Field(ge=1, le=12)] | None = None
 ) -> ToolResult:
-    """The signed-in customer's spending summary by category.
+    """The signed-in customer's spending summary by category for the last 90 days, the only window available.
 
     Args:
-        months: Months to look back.
+        months: Months the customer asked about; the result always covers the last 90 days.
     """
     _check_round(ctx)
-    return tools.not_ready("get_my_spending")
+    return tools.get_my_spending(ctx.deps, months)
 
 
 @_customer_scoped_tool
 def get_my_campaigns(ctx: RunContext[AgentDeps]) -> ToolResult:
-    """Campaigns and promotions the signed-in customer is enrolled in or eligible for."""
+    """Campaigns and promotions sent to the signed-in customer that are running now (may be none)."""
     _check_round(ctx)
-    return tools.not_ready("get_my_campaigns")
+    return tools.get_my_campaigns(ctx.deps)
 
 
 @_customer_scoped_tool
 def get_my_transactions(
     ctx: RunContext[AgentDeps], limit: Annotated[int, Field(ge=1, le=50)] | None = None
 ) -> ToolResult:
-    """The signed-in customer's recent transactions.
+    """The signed-in customer's recent transactions, newest first (at most the last 20 are available).
 
     Args:
-        limit: How many transactions to return.
+        limit: How many transactions to return (default 10).
     """
     _check_round(ctx)
-    return tools.not_ready("get_my_transactions")
+    return tools.get_my_transactions(ctx.deps, limit)
 
 
 @_customer_scoped_tool
 def get_my_contacts(ctx: RunContext[AgentDeps]) -> ToolResult:
     """The signed-in customer's recent contacts with the bank."""
     _check_round(ctx)
-    return tools.not_ready("get_my_contacts")
+    return tools.get_my_contacts(ctx.deps)
 
 
 @_customer_scoped_tool
 def get_my_complaints(ctx: RunContext[AgentDeps]) -> ToolResult:
     """The signed-in customer's complaints and their status."""
     _check_round(ctx)
-    return tools.not_ready("get_my_complaints")
+    return tools.get_my_complaints(ctx.deps)
 
 
 @_customer_scoped_tool
@@ -134,24 +134,24 @@ def get_branch_info(ctx: RunContext[AgentDeps], city: Annotated[str, Field(max_l
     """Branch locations and opening hours.
 
     Args:
-        city: City to look for branches in.
+        city: City to look for branches in; defaults to the customer's city.
     """
     _check_round(ctx)
-    return tools.not_ready("get_branch_info")
+    return tools.get_branch_info(ctx.deps, city)
 
 
 @_customer_scoped_tool
 def get_exchange_rate(
     ctx: RunContext[AgentDeps], base_currency: Currency | None = None, quote_currency: Currency | None = None
 ) -> ToolResult:
-    """Current exchange rate between two currencies.
+    """The bank's latest buy and sell exchange rates (ARS, COP, MXN, USD); either currency may be omitted.
 
     Args:
         base_currency: Currency to convert from.
         quote_currency: Currency to convert to.
     """
     _check_round(ctx)
-    return tools.not_ready("get_exchange_rate")
+    return tools.get_exchange_rate(ctx.deps, base_currency, quote_currency)
 
 
 @_customer_scoped_tool

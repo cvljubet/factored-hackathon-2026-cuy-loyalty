@@ -10,6 +10,12 @@ def normalize(text: str) -> str:
     return re.sub(r"\s+", " ", without_accents).strip()
 
 
+def city_key(city: str) -> str:
+    """The branch sort-key form of a city ("Ciudad de México" -> "ciudad_de_mexico"); the same as
+    city_key in data/pipelines/serving/load_customer_serving.py, which wrote the keys."""
+    return re.sub(r"[^a-z0-9]+", "_", normalize(city)).strip("_")
+
+
 def compile_patterns(patterns: Iterable[str]) -> tuple[re.Pattern[str], ...]:
     return tuple(re.compile(pattern) for pattern in patterns)
 
