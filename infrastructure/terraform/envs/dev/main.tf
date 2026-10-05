@@ -108,5 +108,14 @@ module "backend_cdn" {
   comment            = "${local.name_prefix} backend API (HTTPS)"
 }
 
+# The React app (frontend/ Vite build) from a private bucket over HTTPS.
+module "frontend_site" {
+  source        = "../../modules/static_site"
+  name_prefix   = local.name_prefix
+  site_name     = "frontend"
+  force_destroy = true # hackathon env: allow teardown
+  comment       = "${local.name_prefix} frontend (HTTPS)"
+}
+
 # Later tasks plug in here the same way, e.g.:
 # module "serving"  { source = "../../modules/dynamodb" ... }  # recommendations for the agent

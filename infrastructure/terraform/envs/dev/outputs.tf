@@ -74,3 +74,20 @@ output "backend_cloudfront_domain" {
 output "backend_https_url" {
   value = "https://${module.backend_cdn.domain_name}"
 }
+
+output "frontend_bucket_name" {
+  value = module.frontend_site.bucket_name
+}
+
+output "frontend_cloudfront_distribution_id" {
+  value = module.frontend_site.distribution_id
+}
+
+output "frontend_cloudfront_domain" {
+  value = module.frontend_site.domain_name
+}
+
+# Add this origin to backend_cors_origins once known.
+output "frontend_https_url" {
+  value = "https://${module.frontend_site.domain_name}"
+}

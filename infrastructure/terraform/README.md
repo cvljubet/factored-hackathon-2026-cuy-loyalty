@@ -15,6 +15,7 @@ modules/cognito/    user pool + SPA app client for the React login
 modules/ecr/        container registry per service image (backend API)
 modules/ecs_service/ Fargate service + ALB + security groups + IAM roles + logs (backend API)
 modules/cloudfront_api/ HTTPS CloudFront distribution in front of the backend ALB (no caching)
+modules/static_site/ private S3 bucket + CloudFront (OAC, SPA routing) for the React frontend
 ```
 
 `envs/dev` has one required variable (no default), so every plan/apply names the
