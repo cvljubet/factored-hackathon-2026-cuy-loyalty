@@ -49,6 +49,18 @@ def test_4_campaign_sends(spark, lake):
     assert reasons(spark, lake, "campaign_sends", "send_id")["N4"] == ["event_order", "undelivered_engagement"]
 
 
+def test_campaign_subjects_written_with_nan_are_filled_from_the_campaign(spark, lake):
+    subjects = {
+        r.send_id: (r.subject, r.subject_imputed)
+        for r in spark.read.parquet(f"{lake}/silver/campaign_sends/").collect()
+    }
+    assert subjects["N1"] == ("¡Oferta especial en Tarjeta Crédito!", True)  # M1's product, from its name
+    assert subjects["N2"] == (None, False)  # M9 doesn't exist: nothing to fill it with
+    assert subjects["N4"] == ("¡Oferta especial en Inversión!", False)  # already fine
+    report = {(r.table, r.rule): r.failing_rows for r in latest(spark, f"{lake}/silver/_rule_report/")}
+    assert report[("campaign_sends", "imputed:subject")] == 1
+
+
 def test_5_an_empty_source_column_is_reported_once(spark, lake):
     report = {(r.table, r.rule): r for r in latest(spark, f"{lake}/silver/_rule_report/")}
     origin = report[("complaints", "all_null:origin_interaction_id")]
@@ -154,9 +166,10 @@ def test_gold_conversions_and_fx_cost(spark, lake):
     assert c1.estimated_monthly_income_usd == pytest.approx(750.0)  # 3,000,000 COP at 4000 per USD
     assert c1.fx_cost_usd_90d == pytest.approx(0.5)  # T7, see lake_fixture
     assert c1.n_product_contacts == 2  # I1 and I4 (contact_reason "Producto")
-    c2 = spark.read.parquet(f"{lake}/gold/customer_360/").where("customer_id = 'C2'").first()
-    p2 = next(p for p in c2.products if p.product_id == "P2")
-    assert p2.current_balance_usd == pytest.approx(1.25)  # 5000 COP
+    savings = spark.read.parquet(f"{lake}/gold/product_catalog/").where("product_type = 'Cuenta Ahorro'").first()
+    # P1 and P4 hold 1000 COP, P2 5000 COP (its later version); P3 is an orphan, left out.
+    assert savings.n_products == 3
+    assert savings.avg_balance_usd == pytest.approx((0.25 + 1.25 + 0.25) / 3)
     fx = spark.read.parquet(f"{lake}/gold/fx_daily/").where(
         "date = '2026-06-01' AND source_currency = 'USD' AND target_currency = 'COP'"
     ).first()

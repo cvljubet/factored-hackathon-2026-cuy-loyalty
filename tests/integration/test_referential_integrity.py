@@ -118,12 +118,16 @@ def test_gold_leaves_out_orphaned_customers_and_products_and_counts_them(spark, 
     exclusions = {r.table: r for r in latest(spark, f"{lake}/gold/_exclusions/", schema)}
     txn = exclusions["transactions"]
     assert (txn.rows_in, txn.rows_excluded) == (8, 3)
-    assert txn.excluded_by_reason == {"orphan_customers": 1, "orphan_products": 2}
-    assert exclusions["satisfaction_surveys"].excluded_by_reason == {"orphan_customers": 1, "score_out_of_range": 1}
+    assert txn.excluded_by_reason == {"orphan_customers": 1, "orphan_products": 2, "outside_dataset": 0}
+    assert exclusions["satisfaction_surveys"].excluded_by_reason == {
+        "orphan_customers": 1, "score_out_of_range": 1, "outside_dataset": 0
+    }
+    assert exclusions["complaints"].excluded_by_reason["outside_dataset"] == 1  # Q3, dated 2027
     assert "customers" not in exclusions
 
     c1 = spark.read.parquet(f"{lake}/gold/customer_features/").where("customer_id = 'C1'").first()
     assert c1.txn_count_90d == 3  # T1, T7, T8: the orphan branch on T7 doesn't remove it
     assert c1.n_campaign_sends == 2  # N2's campaign doesn't exist, but the send stays
-    customers = spark.read.parquet(f"{lake}/gold/customer_360/").select("customer_id").collect()
-    assert sorted(r[0] for r in customers) == ["C1", "C2", "C3", "C4", "C5"]
+    for table in ["customer_features", "agent/customer_360"]:
+        customers = spark.read.parquet(f"{lake}/gold/{table}/").select("customer_id").collect()
+        assert sorted(r[0] for r in customers) == ["C1", "C2", "C3", "C4", "C5"], table

@@ -3,6 +3,6 @@ variable "lake_bucket" {
 }
 
 variable "database_names" {
-  description = "Map of layer -> Glue database name (bronze, silver, gold)."
+  description = "Map of layer -> Glue database name (bronze, silver, gold, agent)."
   type        = map(string)
 }

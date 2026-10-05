@@ -13,6 +13,7 @@ locals {
     "--bronze_db"                        = var.database_names["bronze"]
     "--silver_db"                        = var.database_names["silver"]
     "--gold_db"                          = var.database_names["gold"]
+    "--agent_db"                         = var.database_names["agent"]
     "--enable-glue-datacatalog"          = "true"
     "--enable-metrics"                   = "true"
     "--enable-continuous-cloudwatch-log" = "true"

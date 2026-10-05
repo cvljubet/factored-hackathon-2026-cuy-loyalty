@@ -236,15 +236,17 @@ ROWS = {
     ),
     "campaign_sends": rows(
         {"send_date": "2026-05-05 10:00:00", "send_status": "Sent", "was_delivered": "true", "was_clicked": "false"},
-        # sent, was_opened blank: imputed false; not_allowed: there is no Fax channel
-        {"send_id": "N1", "campaign_id": "M1", "customer_id": "C1", "send_channel": "Fax"},
-        # orphan_marketing_campaigns: kept in gold
+        # sent, was_opened blank: imputed false; not_allowed: there is no Fax channel.
+        # Subject "en nan": filled with M1's product, which silver takes from the campaign name.
+        {"send_id": "N1", "campaign_id": "M1", "customer_id": "C1", "send_channel": "Fax",
+         "subject": "¡Oferta especial en nan!"},
+        # orphan_marketing_campaigns: kept in gold. Subject "en nan" with no campaign to fill it: null.
         {"send_id": "N2", "campaign_id": "M9", "customer_id": "C1", "was_opened": "true",
-         "open_date": "2026-05-06 10:00:00"},
+         "open_date": "2026-05-06 10:00:00", "subject": "¡Oferta especial en nan!"},
         {"send_id": "N3", "campaign_id": "M1", "customer_id": "C9"},  # orphan_customers
         # undelivered_engagement and event_order: failed, yet opened, a day before it was sent
         {"send_id": "N4", "campaign_id": "M1", "customer_id": "C2", "send_status": "Failed", "was_delivered": "false",
-         "was_opened": "true", "open_date": "2026-05-04 10:00:00"},
+         "was_opened": "true", "open_date": "2026-05-04 10:00:00", "subject": "¡Oferta especial en Inversión!"},
     ),
     "daily_exchange_rates": exchange_rates(FX_GAP, FX_OVERRIDES),
 }

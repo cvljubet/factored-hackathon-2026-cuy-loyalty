@@ -24,7 +24,7 @@ rate (status `known_broken`), but they never fail the pipeline and rows get no o
 |---|---|---|
 | Call transcripts are templates | 42 distinct `customer_text` and 42 `agent_text` values across 171,321 transcripts; agent lines keep unfilled placeholders such as `{monto} {moneda}` and `{limite}`; `detected_intents` is always `consulta_general` | Transcripts can't support NLP features or quoted examples; we use the structured fields (`contact_reason`, sentiment, `entities_*`) instead |
 | Complaint categories are uniform | 5 categories with 13,194 to 13,580 complaints each; the description is always "Queja relacionada con <category>" | Complaint category carries no information about the customer; only complaint counts are used |
-| Templated campaign subjects | Every subject is "¡Oferta especial en <product>!"; 38,142 sends say "en nan", a missing product written out as text | Subjects aren't used as features |
+| Templated campaign subjects | Every subject is "¡Oferta especial en <product>!"; 38,142 sends say "en nan", a missing product written out as text | Subjects aren't used as features. Silver fills "nan" with the campaign's promoted product (`subject_imputed`), or leaves the subject null when the campaign has none, so the assistant never shows "en nan" |
 | One geographic zone | All 350 branches are "Urbana" (the dictionary lists Urban, Suburban, Rural) | Zone can't segment branches |
 
 ## Coverage gaps

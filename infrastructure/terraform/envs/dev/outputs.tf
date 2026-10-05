@@ -10,6 +10,10 @@ output "glue_databases" {
   value = module.catalog.database_names
 }
 
+output "agent_read_policy_arn" {
+  value = module.catalog.agent_read_policy_arn
+}
+
 output "athena_workgroup" {
   value = module.catalog.athena_workgroup
 }

@@ -9,3 +9,8 @@ output "bronze_crawler_name" {
 output "athena_workgroup" {
   value = aws_athena_workgroup.this.name
 }
+
+output "agent_read_policy_arn" {
+  description = "Attach to the role that serves the assistant (the backend's ECS task role)."
+  value       = aws_iam_policy.agent_read.arn
+}

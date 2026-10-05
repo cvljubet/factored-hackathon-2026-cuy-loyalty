@@ -456,6 +456,30 @@ def add_cross_table_flags(spark: SparkSession, root: str, df: DataFrame, table: 
     return df
 
 
+def add_cross_table_imputations(spark: SparkSession, root: str, df: DataFrame, table: str) -> DataFrame:
+    """Values filled from the row another table's row points to, marked in <column>_imputed.
+
+    campaign_sends.subject is "¡Oferta especial en <product>!", and the source wrote a missing
+    product as "nan". The product is the campaign's promoted_product (filled from the campaign
+    name in silver marketing_campaigns, built before the sends). With no product to put there (an
+    unknown campaign, or a GEN campaign with no single product) the subject becomes null."""
+    if table != "campaign_sends":
+        return df
+    campaigns = read_silver(spark, root, "marketing_campaigns").select(
+        F.col("campaign_id").alias("_campaign_id"), F.col("promoted_product").alias("_product")
+    )
+    broken = F.col("subject").rlike(r"\bnan\b")
+    return (
+        df.join(F.broadcast(campaigns), F.col("campaign_id") == F.col("_campaign_id"), "left")
+        .withColumn("subject_imputed", broken & F.col("_product").isNotNull())
+        .withColumn(
+            "subject",
+            F.when(~broken, F.col("subject")).otherwise(F.regexp_replace("subject", r"\bnan\b", F.col("_product"))),
+        )
+        .drop("_campaign_id", "_product")
+    )
+
+
 def add_arrival_lag(spark: SparkSession, root: str, df: DataFrame, table: str) -> DataFrame:
     """business_date: the source's business day of the event the row's process_date follows (its
     own, its session's first or its interaction's, see dq_rules.PROCESS_DATE_FOLLOWS), which starts
@@ -765,6 +789,7 @@ def main(argv):
         silver = table_rules.apply(deduplicate(clean(raw, cfg), table, cfg), table)
         silver = contracts.add_flags(silver, CONTRACTS[table])
         silver = add_cross_table_flags(spark, root, add_orphan_flags(spark, root, silver, table), table, final)
+        silver = add_cross_table_imputations(spark, root, silver, table)
         silver = add_arrival_lag(spark, root, silver, table)
         silver = add_validity(silver).withColumn("_processed_at", F.current_timestamp())
         write_silver(silver, root, args["silver_db"], table, cfg)
