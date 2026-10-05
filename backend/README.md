@@ -73,6 +73,23 @@ path, which the backend needs to import the top-level `agents` package.
 
 Docs are at http://localhost:8000/docs.
 
+## Docker (ECS Fargate)
+
+Build from the repository root (the context must include `backend/` and `agents/`):
+
+```sh
+docker build --platform linux/amd64 -f backend/Dockerfile -t cuy-loyalty-backend .
+docker run --rm -p 8000:8000 \
+  -e COGNITO_REGION=us-east-2 -e COGNITO_USER_POOL_ID=<pool id> -e COGNITO_APP_CLIENT_ID=<client id> \
+  cuy-loyalty-backend
+```
+
+The image installs only runtime dependencies from `uv.lock`, runs as a non-root
+user on port 8000 with a single Uvicorn worker (sessions and handoffs are in
+memory), and holds no configuration or credentials. `GET /health` is the
+unauthenticated health check. The container exits at startup if the Cognito
+variables are missing.
+
 ## Tests
 
 ```sh
