@@ -46,5 +46,13 @@ variable "backend_allowed_cidrs" {
 variable "backend_cors_origins" {
   description = "Browser origins allowed to call the backend (CORS_ALLOW_ORIGINS)."
   type        = list(string)
-  default     = ["http://localhost:5173"]
+  default = [
+    "http://localhost:5173",                 # local Vite dev server
+    "https://d1u14dr29pbaaw.cloudfront.net", # deployed frontend (frontend_https_url)
+  ]
+
+  validation {
+    condition     = !contains(var.backend_cors_origins, "*")
+    error_message = "List explicit origins; a wildcard (*) is not allowed."
+  }
 }
