@@ -47,7 +47,15 @@
     "inputLabel": "Mensaje",
     "attachFile": "Adjuntar archivo",
     "send": "Enviar mensaje",
-    "mockReply": "¡Gracias por tu mensaje! Todavía me estoy conectando a tu cuenta de lealtad, así que aún no puedo responder eso."
+    "typing": "El asistente está escribiendo...",
+    "signInAgain": "Iniciar sesión de nuevo",
+    "errors": {
+      "sessionExpired": "Tu sesión expiró. Vuelve a iniciar sesión para continuar.",
+      "notLinked": "Tu cuenta no está vinculada a un cliente. Contacta al administrador.",
+      "invalidMessage": "No pudimos procesar tu mensaje. Revisa que no esté vacío ni sea demasiado largo.",
+      "network": "No se pudo conectar con el asistente. Revisa tu conexión e inténtalo de nuevo.",
+      "server": "El asistente no pudo responder en este momento. Inténtalo de nuevo en unos minutos."
+    }
   },
   "auth": {
     "loading": "Cargando...",

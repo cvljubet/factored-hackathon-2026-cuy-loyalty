@@ -1,6 +1,6 @@
 import { CheckCheck, User as UserIcon } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import type { Message } from '../data/mock'
+import type { Message } from '../chat/types'
 import { Logo } from './Logo'
 
 function formatTime(date: Date, language: string): string {

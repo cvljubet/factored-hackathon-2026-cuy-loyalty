@@ -47,7 +47,15 @@
     "inputLabel": "Mensagem",
     "attachFile": "Anexar arquivo",
     "send": "Enviar mensagem",
-    "mockReply": "Obrigado pela sua mensagem! Ainda estou me conectando à sua conta de fidelidade, então ainda não posso responder isso."
+    "typing": "O assistente está digitando...",
+    "signInAgain": "Entrar novamente",
+    "errors": {
+      "sessionExpired": "Sua sessão expirou. Entre novamente para continuar.",
+      "notLinked": "Sua conta não está vinculada a um cliente. Entre em contato com o administrador.",
+      "invalidMessage": "Não foi possível processar sua mensagem. Verifique se ela não está vazia nem é longa demais.",
+      "network": "Não foi possível conectar ao assistente. Verifique sua conexão e tente novamente.",
+      "server": "O assistente não conseguiu responder agora. Tente novamente em alguns minutos."
+    }
   },
   "auth": {
     "loading": "Carregando...",
