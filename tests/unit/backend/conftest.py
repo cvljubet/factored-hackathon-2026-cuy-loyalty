@@ -7,6 +7,10 @@ import jwt
 import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi.testclient import TestClient
+from pydantic_ai import models
+
+# Any attempt to reach a real model (e.g. Bedrock) fails the test instead of calling AWS.
+models.ALLOW_MODEL_REQUESTS = False
 
 REGION = "us-east-2"
 USER_POOL_ID = "us-east-2_TestPool"
