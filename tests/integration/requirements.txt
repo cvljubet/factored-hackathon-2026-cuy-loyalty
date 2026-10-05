@@ -1,0 +1,8 @@
+# What the Glue 5.0 jobs run with, for the local Spark tests:
+#   uv run --no-project --python 3.11 --with-requirements tests/integration/requirements.txt pytest tests/integration
+pyspark==3.5.4
+pandera==0.33.1
+pandas==2.2.3
+numpy<2
+pyarrow<18
+pytest

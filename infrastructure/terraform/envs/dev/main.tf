@@ -23,6 +23,13 @@ module "catalog" {
   crawler_role_arn = module.iam.glue_role_arn
 }
 
+# Glue tables over the data quality reports, and the dq_summary view in Athena.
+module "dq_reporting" {
+  source         = "../../modules/dq_reporting"
+  lake_bucket    = module.data_lake.lake_bucket
+  database_names = module.catalog.database_names
+}
+
 module "glue_etl" {
   source           = "../../modules/glue_etl"
   name_prefix      = local.name_prefix
