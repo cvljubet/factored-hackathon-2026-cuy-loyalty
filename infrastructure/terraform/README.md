@@ -28,9 +28,26 @@ terraform plan -var="backend_image_tag=<git sha in ECR>"
 ```
 
 Clients use `terraform output -raw backend_https_url` (CloudFront, HTTPS). The load
-balancer behind it speaks HTTP and accepts only CloudFront's origin-facing prefix list.
-`backend_allowed_cidrs` optionally adds direct HTTP access for debugging (empty by
-default); never send Cognito tokens over it.
+balancer behind it is **internal**: it sits in two private subnets of the default VPC (no route
+to or from the internet) and CloudFront reaches it through a **VPC origin**, a network interface
+CloudFront places inside the VPC. The API has no public address, and requests (with their Cognito
+token) never cross the internet in clear; the last hop is HTTP inside AWS's network. The task
+runs in two default (public) subnets with a public IP for outbound calls only (ECR, Cognito, STS,
+Bedrock), which avoids a NAT gateway; its security group admits only the load balancer.
+Creating or changing the VPC origin takes up to 15 minutes.
+
+### Stopping the app without destroying it
+
+```bash
+terraform apply -var="backend_image_tag=<current tag>" -var="backend_desired_count=0"   # stop
+terraform apply -var="backend_image_tag=<current tag>"                                  # start (default 1)
+```
+
+At 0 tasks there is no Fargate, task IPv4 or Bedrock cost; the internal load balancer (about
+$16/month) and the idle CloudFront distributions, buckets, VPC origin and guardrail stay as they
+are, so starting again is one apply with no new URLs. For a quick stop between applies,
+`aws ecs update-service --cluster cuy-loyalty-dev --service cuy-loyalty-dev-backend --desired-count 0`
+works too, but the next apply sets the count back to `backend_desired_count`.
 
 ## Deploy
 
@@ -153,11 +170,11 @@ region         = us-east-2
 
 3. Smoke test from your machine:
    `BEDROCK_PROFILE=cuy-bedrock BEDROCK_GUARDRAIL_ID=$(terraform output -raw bedrock_guardrail_id) BEDROCK_GUARDRAIL_VERSION=$(terraform output -raw bedrock_guardrail_version) uv run python scripts/bedrock_smoke.py` (from the repo root).
-4. Switch the backend over: apply `envs/dev` with `-var bedrock_state_bucket=$STATE_BUCKET` and an
-   image built from this branch (its entrypoint writes the `bedrock` profile). That gives the task role
-   `sts:AssumeRole` on the invoker role and sets `AGENT_LLM`/`AGENT_ROUTER=bedrock`, `BEDROCK_ROLE_ARN`,
-   `BEDROCK_PROFILE` and the guardrail ID and version. Without the variable the backend stays on
-   `AGENT_LLM=local`, exactly as before. The inquiry fallback is Sonnet 4.6 (Sonnet 5 and 5.5 are
+4. Apply `envs/dev` with an image that has `backend/docker-entrypoint.sh` (it writes the `bedrock`
+   profile). `bedrock_enabled` is on by default: `envs/dev` reads `envs/dev-app`'s outputs from the
+   same state bucket, gives the task role `sts:AssumeRole` on the invoker role and sets
+   `AGENT_LLM`/`AGENT_ROUTER=bedrock`, `BEDROCK_ROLE_ARN`, `BEDROCK_PROFILE` and the guardrail ID and
+   version. `-var bedrock_enabled=false` puts the backend back on `AGENT_LLM=local`. The inquiry fallback is Sonnet 4.6 (Sonnet 5 and 5.5 are
    not available to the model account); change it with `-var bedrock_inquiry_fallback_model_id=<id>`
    after the same `converse` check, or turn it off with an empty value.
 

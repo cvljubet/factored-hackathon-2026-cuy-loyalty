@@ -13,8 +13,20 @@ variable "vpc_id" {
 }
 
 variable "subnet_ids" {
-  description = "Public subnets (at least two AZs) for the load balancer and the task."
+  description = "Public subnets (at least two AZs) for the task, and for the load balancer unless alb_subnet_ids is set."
   type        = list(string)
+}
+
+variable "internal" {
+  description = "Internal load balancer (no public address), e.g. behind a CloudFront VPC origin."
+  type        = bool
+  default     = false
+}
+
+variable "alb_subnet_ids" {
+  description = "Subnets for the load balancer, in the same AZs as subnet_ids (private ones for an internal ALB). Null = subnet_ids."
+  type        = list(string)
+  default     = null
 }
 
 variable "image" {

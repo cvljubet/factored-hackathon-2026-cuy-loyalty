@@ -93,6 +93,6 @@ output "frontend_https_url" {
 }
 
 output "backend_agent_llm" {
-  description = "local, or bedrock when bedrock_state_bucket is set."
+  description = "bedrock, or local when bedrock_enabled = false."
   value       = local.agent_environment["AGENT_LLM"]
 }

@@ -8,6 +8,24 @@ variable "origin_domain_name" {
   type        = string
 }
 
+# A separate flag because count can't depend on the ALB's ARN, which is unknown until the ALB exists.
+variable "use_vpc_origin" {
+  description = "Reach an internal ALB (vpc_origin_alb_arn) through a CloudFront VPC origin instead of a public HTTP origin."
+  type        = bool
+  default     = false
+}
+
+variable "vpc_origin_alb_arn" {
+  description = "ARN of the internal ALB, required when use_vpc_origin is true."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = !var.use_vpc_origin || var.vpc_origin_alb_arn != null
+    error_message = "Set vpc_origin_alb_arn when use_vpc_origin is true."
+  }
+}
+
 variable "comment" {
   type    = string
   default = ""
