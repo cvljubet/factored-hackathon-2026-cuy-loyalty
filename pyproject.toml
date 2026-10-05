@@ -4,17 +4,13 @@ version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
+# Runtime dependencies of the backend API and agents (what the Docker image installs).
 dependencies = [
     "boto3>=1.43.105",
     "fastapi>=0.142.2",
-    "fg-data-profiling>=4.20.0",
-    "ipywidgets>=8.1.9",
-    "notebook>=7.6.3",
-    "pandas<3",
     "pydantic-ai-slim[bedrock]>=2.54.0",
     "pydantic-settings>=2.15.0",
     "pyjwt[crypto]>=2.15.1",
-    "tabulate>=0.10.0",
     "uvicorn[standard]>=0.54.0",
 ]
 
@@ -23,6 +19,18 @@ dev = [
     "httpx2>=2.13.1",
     "pytest>=9.1.1",
 ]
+# Notebook and data-exploration tools; not needed by the API.
+data = [
+    "fg-data-profiling>=4.20.0",
+    "ipywidgets>=8.1.9",
+    "notebook>=7.6.3",
+    "pandas<3",
+    "tabulate>=0.10.0",
+]
+
+[tool.uv]
+# Local `uv sync` / `uv run` keep installing everything; the Docker image uses --no-default-groups.
+default-groups = ["dev", "data"]
 
 [tool.pytest.ini_options]
 pythonpath = ["backend", "."]

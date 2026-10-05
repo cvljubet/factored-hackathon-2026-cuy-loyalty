@@ -1,0 +1,15 @@
+# Allow-list: the backend image needs only the lockfile and the Python packages.
+# Everything else (frontend, infrastructure, data, notebooks, tests, .env files,
+# AWS credentials, the local .venv) stays out of the build context.
+*
+!pyproject.toml
+!uv.lock
+!backend/app
+!agents
+
+# Never ship local secrets or build leftovers, even inside allowed folders.
+**/.env
+**/.env.*
+**/__pycache__
+**/*.py[cod]
+**/.pytest_cache

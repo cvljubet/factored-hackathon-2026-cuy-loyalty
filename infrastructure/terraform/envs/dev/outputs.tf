@@ -41,3 +41,7 @@ output "cognito_client_id" {
 output "cognito_issuer_url" {
   value = module.auth.issuer_url
 }
+
+output "backend_ecr_repository_url" {
+  value = module.backend_registry.repository_url
+}
