@@ -78,7 +78,11 @@ HOME_CURRENCY = {"México": "MXN", "Colombia": "COP", "Argentina": "ARS"}
 
 # daily_exchange_rates holds every directed pair of these, every day of the dataset.
 CURRENCIES = ["ARS", "COP", "MXN", "USD"]
-FX_TOLERANCE = 0.02  # A->B x B->A and cross rates may be off by this much before they're flagged
+# Each published rate is up to FX_NOISE off a consistent one: on 2026-10-04, A->B x B->A was within
+# 4% of 1 for every pair (p50 1.2%, max 3.99%), which two rates 2% off each explain. A check that
+# combines n rates allows (1 + FX_NOISE)^n - 1: 4.04% for the inverse (2 rates), 6.12% for cross
+# rates (3). Beyond that, a rate is wrong, not noisy.
+FX_NOISE = 0.02
 FX_MAX_FILLED_DAYS = 3  # more consecutive missing days than this for a pair fails the silver job
 
 # Campaign names look like CMP_RET_INV_May2025_0146: objective code, product code, month, sequence.
@@ -258,6 +262,27 @@ DATE_ORDER = {
 # A record processed more than this many days after its event arrived late (is_late_arrival).
 LATE_ARRIVAL_DAYS = 1
 
+# process_date is the source's business day, which starts in the morning: an event before this time
+# belongs to the previous day. Measured on 2026-10-04: every event before the time had the previous
+# day's process_date and every one after had its own; events at exactly the time fall on either day.
+BUSINESS_DAY_START = {
+    "transactions": "06:00:00",
+    "campaign_sends": "06:00:00",
+    "digital_events": "06:00:00",
+    "call_center_interactions": "08:00:00",
+    "complaints": "08:00:00",
+}
+# Tables whose process_date follows another row's time, not their own event's:
+#   digital_events: the session's first event (99.999% of rows; the rest start at exactly 06:00:00).
+#   call_transcripts, satisfaction_surveys: the interaction they belong to, on its business day.
+#   (Measured on 2026-10-04: all transcripts, and 212,757 of 212,759 surveys, which are answered up to
+#   36 hours later; the other 2 follow an interaction at exactly 08:00:00, which is either day.)
+PROCESS_DATE_FOLLOWS = {
+    "digital_events": "session",
+    "call_transcripts": "interaction",
+    "satisfaction_surveys": "interaction",
+}
+
 # Rows per table in the data dictionary, which calls them approximate ("~19,000,000" in total).
 # Its 3,000 for daily_exchange_rates can't be right: every pair, every day is 1,097 x 12 = 13,164.
 EXPECTED_ROWS = {
@@ -276,5 +301,5 @@ EXPECTED_ROWS = {
     "daily_exchange_rates": 13_164,
 }
 VOLUME_TOLERANCE_PCT = 20.0  # raw rows further than this from EXPECTED_ROWS are reported
-# A day with fewer than LOW x or more than HIGH x the table's median rows per day is reported.
+# A day with fewer than LOW x or more than HIGH x the table's median rows for that weekday is reported.
 DAILY_VOLUME_LOW, DAILY_VOLUME_HIGH = 0.5, 2.0

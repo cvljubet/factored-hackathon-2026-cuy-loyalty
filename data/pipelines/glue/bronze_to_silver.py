@@ -35,6 +35,7 @@ from pyspark.sql.types import StringType, StructField, StructType
 import contracts
 import table_rules
 from dq_rules import (
+    BUSINESS_DAY_START,
     DAILY_VOLUME_HIGH,
     DAILY_VOLUME_LOW,
     DATASET_END,
@@ -46,6 +47,7 @@ from dq_rules import (
     LATE_ARRIVAL_DAYS,
     ORPHAN_FAIL_PCT,
     ORPHAN_WARN_PCT,
+    PROCESS_DATE_FOLLOWS,
     VOLUME_TOLERANCE_PCT,
 )
 
@@ -455,29 +457,46 @@ def add_cross_table_flags(spark: SparkSession, root: str, df: DataFrame, table: 
 
 
 def add_arrival_lag(spark: SparkSession, root: str, df: DataFrame, table: str) -> DataFrame:
-    """arrival_lag_days: days from the event to its process_date. is_late_arrival when that is more
-    than LATE_ARRIVAL_DAYS (late data is still valid data: no flag). Processed before it happened
-    is impossible: dq_invalid_processed_before_event. Transcripts take their interaction's date."""
-    if "process_date" not in df.columns:
+    """business_date: the source's business day of the event the row's process_date follows (its
+    own, its session's first or its interaction's, see dq_rules.PROCESS_DATE_FOLLOWS), which starts
+    at BUSINESS_DAY_START. arrival_lag_days: business_date to process_date; is_late_arrival when
+    more than LATE_ARRIVAL_DAYS (late data is still valid: no flag). Processed before its business
+    day is impossible: dq_invalid_processed_before_event. Null when the anchor is unknown."""
+    if "process_date" not in df.columns or (table not in EVENT_DATES and table not in PROCESS_DATE_FOLLOWS):
         return df
-    if table == "call_transcripts":
-        dates = read_silver(spark, root, "call_center_interactions").select(
-            F.col("interaction_id").alias("_event_interaction"), F.to_date("interaction_date").alias("_event_day")
+    follows = PROCESS_DATE_FOLLOWS.get(table)
+    if follows == "interaction":
+        interactions = read_silver(spark, root, "call_center_interactions").select(
+            F.col("interaction_id").alias("_anchor_interaction"), F.col("interaction_date").alias("_anchor")
         )
-        df = df.join(F.broadcast(dates), F.col("interaction_id") == F.col("_event_interaction"), "left")
-        df = df.drop("_event_interaction")
-    elif table in EVENT_DATES:
-        df = df.withColumn("_event_day", F.to_date(EVENT_DATES[table]))
+        df = df.join(F.broadcast(interactions), F.col("interaction_id") == F.col("_anchor_interaction"), "left")
+        df = df.drop("_anchor_interaction")
+        starts_at = BUSINESS_DAY_START["call_center_interactions"]
+    elif follows == "session":
+        df = df.withColumn("_anchor", F.min(EVENT_DATES[table]).over(Window.partitionBy("session_id")))
+        starts_at = BUSINESS_DAY_START[table]
     else:
-        return df
-    lag = F.datediff("process_date", "_event_day")
-    return df.withColumns(
-        {
-            "arrival_lag_days": lag,
-            "is_late_arrival": lag > LATE_ARRIVAL_DAYS,
-            "dq_invalid_processed_before_event": lag < 0,
-        }
-    ).drop("_event_day")
+        df = df.withColumn("_anchor", F.col(EVENT_DATES[table]))
+        starts_at = BUSINESS_DAY_START.get(table, "00:00:00")
+    day = contracts.business_day(F.col("_anchor"), starts_at)
+    h, m, s = map(int, starts_at.split(":"))
+    # An event at exactly the start time can be on either day: the previous one is accepted too.
+    either_day = (contracts.seconds_of_day(F.col("_anchor")) == h * 3600 + m * 60 + s) & (
+        F.col("process_date") == F.date_sub(day, 1)
+    )
+    business = F.when(either_day, F.date_sub(day, 1)).otherwise(day)
+    lag = F.datediff("process_date", "business_date")
+    return (
+        df.withColumn("business_date", business)
+        .withColumns(
+            {
+                "arrival_lag_days": lag,
+                "is_late_arrival": lag > LATE_ARRIVAL_DAYS,
+                "dq_invalid_processed_before_event": lag < 0,
+            }
+        )
+        .drop("_anchor")
+    )
 
 
 def add_validity(df: DataFrame) -> DataFrame:
@@ -638,14 +657,16 @@ def arrival_row(df: DataFrame, table: str):
 
 
 def unusual_days(rows_per_day: dict) -> list:
-    """Days with under DAILY_VOLUME_LOW or over DAILY_VOLUME_HIGH x the median day, as "day:rows"."""
-    if not rows_per_day:
-        return []
-    median = statistics.median(rows_per_day.values())
+    """Days with under DAILY_VOLUME_LOW or over DAILY_VOLUME_HIGH x the median of the same weekday,
+    as "day:rows". By weekday because volume has a weekly rhythm: weekends are normally lower."""
+    weekday = {day: datetime.date.fromisoformat(day).weekday() for day in rows_per_day}
+    medians = {
+        w: statistics.median(n for day, n in rows_per_day.items() if weekday[day] == w) for w in set(weekday.values())
+    }
     return [
         f"{day}:{n}"
         for day, n in sorted(rows_per_day.items())
-        if n < DAILY_VOLUME_LOW * median or n > DAILY_VOLUME_HIGH * median
+        if n < DAILY_VOLUME_LOW * medians[weekday[day]] or n > DAILY_VOLUME_HIGH * medians[weekday[day]]
     ]
 
 

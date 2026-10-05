@@ -151,7 +151,7 @@ Primary key: `send_id`.
 | Column | Type | Required | Rule |
 |---|---|---|---|
 | `send_id` | StringType() | yes |  |
-| `send_date` | TimestampType() | yes | between 2023-06-17 and 2026-06-17 |
+| `send_date` | TimestampType() | yes | between 2023-06-17 and 2026-06-17, business day from 06:00:00 |
 | `process_date` | DateType() | yes |  |
 | `campaign_id` | StringType() | yes |  |
 | `customer_id` | StringType() | yes |  |
@@ -180,7 +180,7 @@ Primary key: `transaction_id`.
 | Column | Type | Required | Rule |
 |---|---|---|---|
 | `transaction_id` | StringType() | yes |  |
-| `transaction_date` | TimestampType() | yes | between 2023-06-17 and 2026-06-17 |
+| `transaction_date` | TimestampType() | yes | between 2023-06-17 and 2026-06-17, business day from 06:00:00 |
 | `process_date` | DateType() | yes |  |
 | `product_id` | StringType() | yes |  |
 | `customer_id` | StringType() | yes |  |
@@ -209,7 +209,7 @@ Primary key: `interaction_id`.
 | Column | Type | Required | Rule |
 |---|---|---|---|
 | `interaction_id` | StringType() | yes |  |
-| `interaction_date` | TimestampType() | yes | between 2023-06-17 and 2026-06-17 |
+| `interaction_date` | TimestampType() | yes | between 2023-06-17 and 2026-06-17, business day from 08:00:00 |
 | `process_date` | DateType() | yes |  |
 | `customer_id` | StringType() | yes |  |
 | `agent_id` | StringType() |  |  |
@@ -288,7 +288,7 @@ Primary key: `event_id`.
 | Column | Type | Required | Rule |
 |---|---|---|---|
 | `event_id` | StringType() | yes |  |
-| `event_date` | TimestampType() | yes | between 2023-06-17 and 2026-06-17 |
+| `event_date` | TimestampType() | yes | between 2023-06-17 and 2026-06-17, business day from 06:00:00 |
 | `process_date` | DateType() | yes |  |
 | `customer_id` | StringType() |  |  |
 | `session_id` | StringType() | yes |  |
@@ -321,7 +321,7 @@ Primary key: `complaint_id`.
 | Column | Type | Required | Rule |
 |---|---|---|---|
 | `complaint_id` | StringType() | yes |  |
-| `creation_date` | TimestampType() | yes | between 2023-06-17 and 2026-06-17 |
+| `creation_date` | TimestampType() | yes | between 2023-06-17 and 2026-06-17, business day from 08:00:00 |
 | `process_date` | DateType() | yes |  |
 | `customer_id` | StringType() | yes |  |
 | `case_type` | StringType() | yes | one of Complaint, Claim, Request, Suggestion |

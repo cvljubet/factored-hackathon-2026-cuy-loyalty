@@ -19,7 +19,7 @@ from dq_rules import (
     DATASET_END,
     DATASET_START,
     DROPPED_COLUMNS,
-    FX_TOLERANCE,
+    FX_NOISE,
     HOME_CURRENCY,
     NPS_CATEGORIES,
     REQUIRED_FILL_PCT,
@@ -164,8 +164,8 @@ def fx_consistency(df: DataFrame) -> DataFrame:
         df.join(inverse, key, "left")
         .join(implied, key, "left")
         .withColumn("dq_invalid_rate_order", ~((F.col("buy_rate") <= rate) & (rate <= F.col("sell_rate"))))
-        .withColumn("dq_invalid_inverse_rate", F.abs(rate * F.col("_inverse") - 1) > FX_TOLERANCE)
-        .withColumn("dq_invalid_cross_rate", cross_off > FX_TOLERANCE)
+        .withColumn("dq_invalid_inverse_rate", F.abs(rate * F.col("_inverse") - 1) > (1 + FX_NOISE) ** 2 - 1)
+        .withColumn("dq_invalid_cross_rate", cross_off > (1 + FX_NOISE) ** 3 - 1)
         .drop("_inverse", "_implied_min", "_implied_max")
     )
 

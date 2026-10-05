@@ -49,12 +49,14 @@ inside the dataset, date order). The same schema flags rows (`required_missing`,
 its findings in `silver/_contract_report/`. `docs/data-contracts.md` is generated from it.
 
 Late arrivals and volumes only warn, in the job log and two reports; they never fail the run.
-Daily tables get `arrival_lag_days` (process_date minus the event's date) and `is_late_arrival` (more
-than `LATE_ARRIVAL_DAYS`, 1); a row processed before its event is flagged
-`dq_invalid_processed_before_event`. `silver/_arrival_report/` has the lag distribution per table.
+Daily tables get `business_date`, the source's business day of the event their process_date follows
+(the day starts at 06:00 or 08:00 depending on the source, `BUSINESS_DAY_START`; a digital event
+follows its session's first event, transcripts and surveys their interaction), `arrival_lag_days`
+(process_date minus business_date) and `is_late_arrival` (more than `LATE_ARRIVAL_DAYS`, 1); a row
+processed before its business day is flagged `dq_invalid_processed_before_event`. `silver/_arrival_report/` has the lag distribution per table.
 `silver/_volume_report/` compares raw rows with the dictionary's counts (`VOLUME_TOLERANCE_PCT`, 20%) and,
 from the `year=/month=/day=` folders, lists days without a file, days with unusual volume (under half or
-over twice the median day) and rows filed under another day than their process_date.
+over twice the median of the same weekday) and rows filed under another day than their process_date.
 
 All reports are Glue tables (`dq_*_report` in the silver database, `dq_exclusions` in gold, from the
 `dq_reporting` Terraform module), and the Athena view `dq_summary` puts every check of each table's

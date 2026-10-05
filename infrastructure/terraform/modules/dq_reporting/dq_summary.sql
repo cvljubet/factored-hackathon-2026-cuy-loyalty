@@ -2,11 +2,12 @@
 -- data quality slide. Each report keeps its own latest run per table, so a run with --tables only
 -- replaces the rows of the tables it built.
 --   failing_rows / total_rows / failing_pct: rows that broke (or were changed by) the check
---   status: ok, flagged, removed, excluded, warn or fail, depending on the report
+--   status: ok, flagged, imputed, removed, excluded, warn or fail, depending on the check
 --   detail: context the numbers don't carry (orphan note, Pandera's error, lag percentiles...)
 WITH all_reports AS (
     -- Flags (<rule>), imputations (imputed:<column>), empty columns (all_null:<column>) and
-    -- contract checks (<kind>:<column>).
+    -- contract checks (<kind>:<column>). A contract kind's own flag (e.g. required_missing, true
+    -- when any column fails it) is left out: its per-column rows say the same, in more detail.
     SELECT
         'silver' AS layer, 'rules' AS report, "table" AS table_name,
         CASE
@@ -16,9 +17,16 @@ WITH all_reports AS (
             ELSE 'flag'
         END AS check_type,
         rule AS check_name, failing_rows, "rows" AS total_rows, failing_pct,
-        CASE WHEN failing_rows > 0 THEN 'flagged' ELSE 'ok' END AS status,
+        CASE
+            WHEN failing_rows = 0 THEN 'ok'
+            WHEN rule LIKE 'imputed:%' THEN 'imputed'
+            ELSE 'flagged'
+        END AS status,
         CAST(NULL AS varchar) AS detail, run_at
     FROM ${silver}.dq_rule_report
+    WHERE rule NOT IN (
+        'required_missing', 'not_allowed', 'out_of_range', 'outside_dataset', 'date_order', 'not_unique'
+    )
 
     UNION ALL
     SELECT 'silver', 'foreign_keys', child_table, 'foreign_key', child_column || ' -> ' || parent_table,
@@ -45,18 +53,24 @@ WITH all_reports AS (
     FROM ${silver}.dq_contract_report
 
     UNION ALL
-    SELECT 'silver', 'arrivals', "table", 'late_arrival', 'late_rows', late_rows, rows_with_lag, late_pct, status,
+    -- The report's status also counts rows processed before their event; those are a flag above.
+    SELECT 'silver', 'arrivals', "table", 'late_arrival', 'late_rows', late_rows, rows_with_lag, late_pct,
+        CASE WHEN late_rows > 0 THEN 'warn' ELSE 'ok' END,
         format('lag p50 %s, p90 %s, p99 %s, max %s days', lag_p50, lag_p90, lag_p99, lag_max), run_at
     FROM ${silver}.dq_arrival_report
 
     UNION ALL
     SELECT 'silver', 'volumes', "table", 'volume', 'volume', NULL, raw_rows, NULL, status,
         format(
-            '%s raw rows vs %s in the dictionary (%s%%); %s days without a file%s; unusual days: %s; '
+            '%s raw rows vs %s in the dictionary (%s%%); %s days without a file%s; %s unusual days%s; '
             || '%s rows filed under another day',
             raw_rows, expected_rows, vs_expected_pct, missing_days,
             CASE WHEN missing_days > 0 THEN ' (' || array_join(slice(missing_day_list, 1, 10), ', ') || ')' ELSE '' END,
-            COALESCE(NULLIF(array_join(slice(unusual_days, 1, 10), ', '), ''), 'none'),
+            cardinality(unusual_days),
+            CASE
+                WHEN cardinality(unusual_days) > 0 THEN ' (' || array_join(slice(unusual_days, 1, 10), ', ') || ')'
+                ELSE ''
+            END,
             COALESCE(rows_filed_on_other_day, 0)
         ),
         run_at

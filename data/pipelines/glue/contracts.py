@@ -19,12 +19,13 @@ import sys
 from functools import reduce
 
 import pandera.pyspark as pa
-from pyspark.sql import DataFrame, Row, Window
+from pyspark.sql import Column, DataFrame, Row, Window
 from pyspark.sql import functions as F
 from pyspark.sql import types as T
 
 from dq_rules import (
     ALLOWED_VALUES,
+    BUSINESS_DAY_START,
     DATASET_END,
     DATASET_START,
     DATE_ORDER,
@@ -48,16 +49,31 @@ KINDS = ["required_missing", "not_allowed", "out_of_range", "outside_dataset", "
 CONTRACT_REPORT = "table string, category string, error_type string, column string, check string, error string"
 
 
-def within_dataset() -> pa.Check:
-    """The event happened between DATASET_START and DATASET_END (by date, for timestamps too)."""
+def seconds_of_day(ts: Column) -> Column:
+    return F.hour(ts) * 3600 + F.minute(ts) * 60 + F.second(ts)
+
+
+def business_day(ts: Column, starts_at: str) -> Column:
+    """The source's business day of a timestamp: before starts_at ("HH:MM:SS") it is the previous day."""
+    h, m, s = map(int, starts_at.split(":"))
+    return F.when(seconds_of_day(ts) < h * 3600 + m * 60 + s, F.date_sub(F.to_date(ts), 1)).otherwise(F.to_date(ts))
+
+
+def within_dataset(table: str) -> pa.Check:
+    """The event's business day (see dq_rules.BUSINESS_DAY_START) is between DATASET_START and
+    DATASET_END: the last business day runs into the next morning."""
     start, end = datetime.date.fromisoformat(DATASET_START), datetime.date.fromisoformat(DATASET_END)
+    starts_at = BUSINESS_DAY_START.get(table, "00:00:00")
 
-    def check(data) -> bool:
-        return data.dataframe.filter(~F.to_date(data.column_name).between(start, end)).limit(1).count() == 0
+    def check(data, start, end, starts_at) -> bool:
+        day = business_day(F.col(data.column_name), starts_at)
+        return data.dataframe.filter(~day.between(start, end)).limit(1).count() == 0
 
+    # Pandera's PySpark backend hands a custom column check its column only when the check has
+    # keyword arguments (start, end, starts_at here); without them it gets the bare DataFrame.
     return pa.Check(
         check, name="within_dataset", error=f"within_dataset({DATASET_START}, {DATASET_END})",
-        statistics={"start": start, "end": end},
+        statistics={"start": start, "end": end, "starts_at": starts_at}, start=start, end=end, starts_at=starts_at,
     )
 
 
@@ -93,7 +109,7 @@ def build(table: str, cfg: dict, columns: list) -> pa.DataFrameSchema:
             low, high = RANGES[table][c]
             checks.append(pa.Check.ge(low) if high is None else pa.Check.in_range(low, high))
         if EVENT_DATES.get(table) == c:
-            checks.append(within_dataset())
+            checks.append(within_dataset(table))
         nullable = c not in REQUIRED.get(table, [])
         schema_columns[c] = pa.Column(types.get(c, T.StringType()), checks=checks, nullable=nullable)
     table_checks = [date_order(a, b) for a, b in DATE_ORDER.get(table, [])]
@@ -124,7 +140,8 @@ def failing(schema: pa.DataFrameSchema) -> list:
             elif check.name == "greater_than_or_equal_to":
                 out.append(("out_of_range", name, value < stats["min_value"]))
             elif check.name == "within_dataset":
-                out.append(("outside_dataset", name, ~F.to_date(value).between(stats["start"], stats["end"])))
+                day = business_day(value, stats["starts_at"])
+                out.append(("outside_dataset", name, ~day.between(stats["start"], stats["end"])))
             else:
                 raise ValueError(f"{schema.name}.{name}: no row-level rule for check {check.name}")
     for check in schema.checks:
@@ -163,11 +180,19 @@ def validate(df: DataFrame, schema: pa.DataFrameSchema) -> list:
     errors = schema.validate(df).pandera.errors
     return [
         Row(table=schema.name, category=category, error_type=error_type, column=e.get("column"),
-            check=e.get("check"), error=e.get("error"))
+            check=e.get("check"), error=short_error(e))
         for category, by_type in errors.items()
         for error_type, found in by_type.items()
         for e in found
     ]
+
+
+def short_error(error: dict):
+    """Pandera's message, without the printout of the whole schema it gives for table-level checks."""
+    message = error.get("error")
+    if message and message.startswith("<Schema"):
+        return f"failed validation {error.get('check')}"
+    return message
 
 
 def render_markdown(contracts: dict) -> str:
@@ -180,7 +205,8 @@ def render_markdown(contracts: dict) -> str:
         if check.name == "greater_than_or_equal_to":
             return f">= {s['min_value']}"
         if check.name == "within_dataset":
-            return f"between {s['start']} and {s['end']}"
+            day = f", business day from {s['starts_at']}" if s["starts_at"] != "00:00:00" else ""
+            return f"between {s['start']} and {s['end']}{day}"
         return check.error
 
     out = [

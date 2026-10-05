@@ -83,6 +83,7 @@ def test_7_exchange_rates_fill_and_consistency(spark, lake):
     assert "cross_rate" in flags("2026-06-05", "ARS", "COP")  # ARS->USD x USD->COP no longer matches
     assert flags("2026-06-06", "MXN", "USD") == ["rate_order"]
     assert fx.where("date = '2026-06-04'").where(~F.col("dq_is_valid")).count() == 0
+    assert fx.where("date = '2026-06-07'").where(~F.col("dq_is_valid")).count() == 0  # 3.5% off: noise
 
 
 def test_7_exchange_rate_gaps_longer_than_three_days_fail_the_job(lake, tmp_path):

@@ -44,6 +44,12 @@ def test_pandera_reports_what_failed(spark, lake):
     assert ("branches", "branches", "unique(branch_code)") in failed
     assert ("service_agents", "email", "not_nullable") in failed
     assert not [r for r in findings if r.error_type == "WRONG_DATATYPE"], "silver types match the contracts"
+    assert not [r for r in findings if r.error_type == "CHECK_ERROR"], "every check runs"
+    # within_dataset is a custom check: Pandera runs it and reports Q3, created in 2027.
+    assert ("complaints", "creation_date", "within_dataset(2023-06-17, 2026-06-17)") in failed
+    # Table-level checks get a short message, not a printout of the whole schema.
+    unique = next(r for r in findings if r.check == "unique(branch_code)")
+    assert unique.error == "failed validation unique(branch_code)"
     assert not [r for r in findings if r.table == "customers" and r.column == "segment"]
 
 

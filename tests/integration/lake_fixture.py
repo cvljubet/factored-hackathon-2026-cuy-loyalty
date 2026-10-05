@@ -39,11 +39,15 @@ def exchange_rates(skip: frozenset = frozenset(), override: dict = None) -> list
 
 
 # The planted FX cases: COP->USD misses two days (filled from the day before); ARS->USD is wrong
-# on 2026-06-05 (its inverse and cross rates disagree); MXN->USD buys above the mid on 2026-06-06.
+# on 2026-06-05 (its inverse and cross rates disagree); MXN->USD buys above the mid on 2026-06-06;
+# COP->MXN is 3.5% high on 2026-06-07, within the source's noise (FX_NOISE): not flagged.
 FX_GAP = frozenset({("COP", "USD", "2026-06-02"), ("COP", "USD", "2026-06-03")})
 FX_OVERRIDES = {
     ("ARS", "USD", "2026-06-05"): {"exchange_rate": "0.002"},
     ("MXN", "USD", "2026-06-06"): {"buy_rate": "0.07"},
+    ("COP", "MXN", "2026-06-07"): {
+        "exchange_rate": "0.00439875", "buy_rate": "0.0043547625", "sell_rate": "0.0044427375",
+    },
 }
 
 
@@ -139,8 +143,9 @@ ROWS = {
         # before_product_opening: P2 opened 2026-01-01; location: Madrid for a Colombia transaction
         {"transaction_id": "T3", "transaction_date": "2025-12-15 12:00:00", "product_id": "P2", "customer_id": "C2",
          "latitude": "40.4", "longitude": "-3.7"},
-        # orphan_products
-        {"transaction_id": "T4", "transaction_date": "2026-06-02 12:00:00", "product_id": "P9", "customer_id": "C1"},
+        # orphan_products. At 03:00, before the 06:00 business day starts: processed on the 1st, on time.
+        {"transaction_id": "T4", "transaction_date": "2026-06-02 03:00:00", "product_id": "P9", "customer_id": "C1",
+         "process_date": "2026-06-01"},
         # orphan_products: null in a NOT NULL key
         {"transaction_id": "T5", "transaction_date": "2026-06-02 12:00:00", "product_id": "", "customer_id": "C1"},
         # orphan_customers (P3's owner is C9 too, so no owner mismatch); delivered in 2026-06-20's file
@@ -202,10 +207,14 @@ ROWS = {
     ),
     "digital_events": rows(
         {"event_date": "2026-05-03 10:00:00", "is_mobile": "true"},
-        {"event_id": "E1", "customer_id": "C1", "product_id": "P1", "duration_seconds": "-5"},  # out_of_range
+        # out_of_range. E1 starts session SES-A at 05:30, before the 06:00 business day: the whole
+        # session, E4 at 06:05 included, has the previous day's process_date, on time.
+        {"event_id": "E1", "customer_id": "C1", "product_id": "P1", "duration_seconds": "-5", "session_id": "SES-A",
+         "event_date": "2026-05-03 05:30:00", "process_date": "2026-05-02"},
         {"event_id": "E2"},  # anonymous, no product: not orphans (nullable keys), but missing_customer
         {"event_id": "E3", "customer_id": "C9"},  # orphan_customers
-        {"event_id": "E4", "customer_id": "C1", "product_id": "P9"},  # orphan_products
+        {"event_id": "E4", "customer_id": "C1", "product_id": "P9", "session_id": "SES-A",  # orphan_products
+         "event_date": "2026-05-03 06:05:00", "process_date": "2026-05-02"},
         # No key: kept, flagged missing_key, not merged with each other.
         {"event_id": "", "customer_id": "C1", "product_id": "P1"},
         {"event_id": "", "customer_id": "C2"},
@@ -221,7 +230,9 @@ ROWS = {
         {"complaint_id": "Q3", "customer_id": "C1", "affected_product_id": "P9",
          "creation_date": "2027-01-01 10:00:00"},
         # orphan_branches and orphan_service_agents
-        {"complaint_id": "Q4", "customer_id": "C2", "related_branch_id": "B9", "assigned_agent_id": "A9"},
+        # At exactly 08:00:00, when the business day starts: either day is on time.
+        {"complaint_id": "Q4", "customer_id": "C2", "related_branch_id": "B9", "assigned_agent_id": "A9",
+         "creation_date": "2026-05-04 08:00:00", "process_date": "2026-05-03"},
     ),
     "campaign_sends": rows(
         {"send_date": "2026-05-05 10:00:00", "send_status": "Sent", "was_delivered": "true", "was_clicked": "false"},
