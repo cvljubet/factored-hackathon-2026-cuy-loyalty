@@ -54,6 +54,59 @@ module "backend_registry" {
   force_delete    = true # hackathon env: allow teardown
 }
 
+# The account's default VPC and its public subnets (looked up, not managed here).
+# Two AZs are enough for the load balancer and keep public IPv4 charges down.
+data "aws_vpc" "default" {
+  default = true
+}
+
+data "aws_subnets" "default" {
+  filter {
+    name   = "vpc-id"
+    values = [data.aws_vpc.default.id]
+  }
+  filter {
+    name   = "default-for-az"
+    values = ["true"]
+  }
+}
+
+# CloudFront's origin-facing addresses: the only source the backend load balancer needs.
+data "aws_ec2_managed_prefix_list" "cloudfront_origin_facing" {
+  name = "com.amazonaws.global.cloudfront.origin-facing"
+}
+
+# Backend + agent API on ECS Fargate behind an HTTP ALB that only CloudFront (plus any optional
+# backend_allowed_cidrs) can reach. One task: sessions and handoffs are in process memory.
+module "backend_service" {
+  source                  = "../../modules/ecs_service"
+  name_prefix             = local.name_prefix
+  service_name            = "backend"
+  vpc_id                  = data.aws_vpc.default.id
+  subnet_ids              = slice(sort(data.aws_subnets.default.ids), 0, 2)
+  image                   = "${module.backend_registry.repository_url}:${var.backend_image_tag}"
+  cpu                     = 256  # 0.25 vCPU
+  memory                  = 1024 # 1 GB
+  desired_count           = 1
+  allowed_prefix_list_ids = [data.aws_ec2_managed_prefix_list.cloudfront_origin_facing.id]
+  allowed_cidrs           = var.backend_allowed_cidrs
+
+  environment = {
+    COGNITO_REGION        = var.region
+    COGNITO_USER_POOL_ID  = module.auth.user_pool_id
+    COGNITO_APP_CLIENT_ID = module.auth.user_pool_client_id
+    CORS_ALLOW_ORIGINS    = jsonencode(var.backend_cors_origins)
+    AGENT_LLM             = "local"
+  }
+}
+
+# HTTPS for the backend on the default *.cloudfront.net domain; nothing is cached.
+module "backend_cdn" {
+  source             = "../../modules/cloudfront_api"
+  name_prefix        = local.name_prefix
+  origin_domain_name = module.backend_service.alb_dns_name
+  comment            = "${local.name_prefix} backend API (HTTPS)"
+}
+
 # Later tasks plug in here the same way, e.g.:
 # module "serving"  { source = "../../modules/dynamodb" ... }  # recommendations for the agent
-# module "app"      { source = "../../modules/ecs_service" ... } # backend + agent API

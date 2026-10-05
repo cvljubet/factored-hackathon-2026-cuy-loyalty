@@ -13,7 +13,21 @@ modules/catalog/    Glue databases per layer, bronze crawler, Athena workgroup
 modules/glue_etl/   PySpark jobs (data/pipelines/glue) + workflow silver -> gold
 modules/cognito/    user pool + SPA app client for the React login
 modules/ecr/        container registry per service image (backend API)
+modules/ecs_service/ Fargate service + ALB + security groups + IAM roles + logs (backend API)
+modules/cloudfront_api/ HTTPS CloudFront distribution in front of the backend ALB (no caching)
 ```
+
+`envs/dev` has one required variable (no default), so every plan/apply names the
+backend image explicitly:
+
+```bash
+terraform plan -var="backend_image_tag=<git sha in ECR>"
+```
+
+Clients use `terraform output -raw backend_https_url` (CloudFront, HTTPS). The load
+balancer behind it speaks HTTP and accepts only CloudFront's origin-facing prefix list.
+`backend_allowed_cidrs` optionally adds direct HTTP access for debugging (empty by
+default); never send Cognito tokens over it.
 
 ## Deploy
 

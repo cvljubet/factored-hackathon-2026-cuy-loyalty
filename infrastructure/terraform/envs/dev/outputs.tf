@@ -45,3 +45,32 @@ output "cognito_issuer_url" {
 output "backend_ecr_repository_url" {
   value = module.backend_registry.repository_url
 }
+
+output "backend_ecs_cluster" {
+  value = module.backend_service.cluster_name
+}
+
+output "backend_ecs_service" {
+  value = module.backend_service.service_name
+}
+
+output "backend_alb_dns_name" {
+  value = module.backend_service.alb_dns_name
+}
+
+output "backend_log_group" {
+  value = module.backend_service.log_group_name
+}
+
+output "backend_cloudfront_distribution_id" {
+  value = module.backend_cdn.distribution_id
+}
+
+output "backend_cloudfront_domain" {
+  value = module.backend_cdn.domain_name
+}
+
+# Use this from the frontend (VITE_API_BASE_URL) and for testing.
+output "backend_https_url" {
+  value = "https://${module.backend_cdn.domain_name}"
+}
