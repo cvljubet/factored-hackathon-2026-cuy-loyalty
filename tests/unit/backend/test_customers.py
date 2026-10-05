@@ -1,11 +1,15 @@
+from decimal import Decimal
+
 import pytest
 
+from agents.serving import DynamoServingRepository
 from app.config import get_settings
-from app.customers.dependencies import get_customer_repository
+from app.customers.dependencies import RepositoryProfileSource, get_customer_repository, get_serving_repository
 from app.customers.fake_data import SYNTHETIC_CUSTOMERS
 from app.customers.models import CustomerProfile
 from app.customers.repository import InMemoryCustomerRepository
 from app.customers.service import CustomerNotFoundError, get_customer_profile
+from app.main import app
 from conftest import OTHER_CUSTOMER, OWN_CUSTOMER
 
 OWN_PROFILE = {
@@ -48,7 +52,7 @@ class TestInMemoryRepository:
 
 class TestProfileService:
     def test_returns_minimal_profile_without_contact_details(self):
-        profile = get_customer_profile(InMemoryCustomerRepository([OWN_CUSTOMER]), "CUST-0042")
+        profile = get_customer_profile(RepositoryProfileSource(InMemoryCustomerRepository([OWN_CUSTOMER])), "CUST-0042")
 
         assert profile == CustomerProfile(**OWN_PROFILE)
         assert "email" not in profile.model_dump()
@@ -56,7 +60,7 @@ class TestProfileService:
 
     def test_unknown_customer_raises(self):
         with pytest.raises(CustomerNotFoundError):
-            get_customer_profile(InMemoryCustomerRepository([]), "CUST-0042")
+            get_customer_profile(RepositoryProfileSource(InMemoryCustomerRepository([])), "CUST-0042")
 
 
 class TestMeProfileEndpoint:
@@ -136,3 +140,92 @@ class TestCannotRequestAnotherCustomer:
 
         assert response.json()["customer_id"] == "CUST-0099"
         assert response.json()["first_name"] == OTHER_CUSTOMER.first_name
+
+
+class ProfileTable:
+    """A DynamoDB Table holding PROFILE items as the loader writes them; records each GetItem."""
+
+    def __init__(self, items):
+        self.items = {(i["PK"], i["SK"]): i for i in items}
+        self.requests = []
+
+    def get_item(self, Key, ProjectionExpression=None, ExpressionAttributeNames=None):
+        self.requests.append(Key)
+        item = self.items.get((Key["PK"], Key["SK"]))
+        if item is None:
+            return {}
+        wanted = set((ExpressionAttributeNames or {}).values()) or set(item)
+        return {"Item": {k: v for k, v in item.items() if k in wanted}}
+
+
+def stored_profile(customer_id, first_name):
+    return {
+        "PK": f"CUST#{customer_id}", "SK": "PROFILE", "first_name": first_name, "last_name": "Gutiérrez",
+        "city": "Querétaro", "state": "Querétaro", "country": "México", "customer_status": "Active",
+        "agent_name": "Luis G.", "bk_segment": "Premium", "customer_id": customer_id,
+        "products": [{"product_type": "Tarjeta Crédito", "bk_is_overdue": True, "current_balance": Decimal("1")}],
+    }
+
+
+@pytest.fixture
+def dynamo_client(client):
+    """The authenticated client with GET /me/profile served from a DynamoDB serving table."""
+    table = ProfileTable([stored_profile("CUST-0042", "Enrique"), stored_profile("CUST-0099", "Otro")])
+    app.dependency_overrides[get_serving_repository] = lambda: DynamoServingRepository(table)
+    return client, table
+
+
+class TestMeProfileFromServingTable:
+    def test_reads_the_tokens_profile_item(self, dynamo_client, token_factory, customer_repository):
+        client, table = dynamo_client
+
+        response = client.get("/me/profile", headers=auth_header(token_factory()))
+
+        assert response.status_code == 200
+        assert response.json() == {"customer_id": "CUST-0042", "first_name": "Enrique", "last_name": "Gutiérrez",
+                                   "city": "Querétaro", "state": "Querétaro", "country": "México"}
+        assert table.requests == [{"PK": "CUST#CUST-0042", "SK": "PROFILE"}]
+        assert customer_repository.requested_ids == []  # the synthetic customers are not consulted
+
+    def test_exposes_no_storage_or_backend_fields(self, dynamo_client, token_factory):
+        client, _ = dynamo_client
+
+        body = client.get("/me/profile", headers=auth_header(token_factory())).text
+
+        for internal in ('"PK"', '"SK"', "CUST#", "bk_", "products", "agent_name", "customer_status", "Premium"):
+            assert internal not in body
+
+    @pytest.mark.parametrize(
+        "params, headers",
+        [({"customer_id": "CUST-0099"}, {}), ({"pk": "CUST#CUST-0099"}, {}), ({}, {"X-Customer-Id": "CUST-0099"})],
+    )
+    def test_request_input_cannot_select_another_partition(self, dynamo_client, token_factory, params, headers):
+        client, table = dynamo_client
+
+        response = client.get("/me/profile", params=params, headers={**auth_header(token_factory()), **headers})
+
+        assert response.json()["first_name"] == "Enrique"
+        assert table.requests == [{"PK": "CUST#CUST-0042", "SK": "PROFILE"}]
+
+    def test_a_customer_missing_from_the_table_is_404(self, dynamo_client, token_factory):
+        client, _ = dynamo_client
+
+        response = client.get("/me/profile", headers=auth_header(token_factory(**{"custom:customer_id": "CUST-NONE"})))
+
+        assert response.status_code == 404
+
+
+def test_chat_and_me_profile_share_one_serving_repository(monkeypatch):
+    from app.chat import dependencies as chat
+
+    shared = RepositoryProfileSource(InMemoryCustomerRepository([OWN_CUSTOMER]))
+    seen = []
+    monkeypatch.setattr(chat, "get_serving_repository", lambda: shared)
+    monkeypatch.setattr(chat, "build_orchestrator", lambda **kw: seen.append(kw["serving"]))
+    chat.get_orchestrator.cache_clear()
+    try:
+        chat.get_orchestrator()
+    finally:
+        chat.get_orchestrator.cache_clear()
+
+    assert seen == [shared]

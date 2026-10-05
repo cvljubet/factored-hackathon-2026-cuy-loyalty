@@ -3,7 +3,8 @@ import pytest
 from agents.engines.escalation import InMemoryHandoffStore
 from agents.factory import build_orchestrator
 from agents.local_model import local_model
-from app.chat.dependencies import RepositoryProfileSource, get_orchestrator
+from app.chat.dependencies import get_orchestrator
+from app.customers.dependencies import RepositoryProfileSource
 from app.main import app
 
 
@@ -16,7 +17,7 @@ def handoffs():
 def chat_client(client, customer_repository, handoffs):
     """The authenticated test client, with the agent served from the test customer repository."""
     orchestrator = build_orchestrator(
-        profiles=RepositoryProfileSource(customer_repository), model=local_model(), handoffs=handoffs
+        serving=RepositoryProfileSource(customer_repository), model=local_model(), handoffs=handoffs
     )
     app.dependency_overrides[get_orchestrator] = lambda: orchestrator
     return client

@@ -128,7 +128,32 @@ module "backend_service" {
     COGNITO_USER_POOL_ID  = module.auth.user_pool_id
     COGNITO_APP_CLIENT_ID = module.auth.user_pool_client_id
     CORS_ALLOW_ORIGINS    = jsonencode(var.backend_cors_origins)
-  }, local.agent_environment)
+  }, local.serving_environment, local.agent_environment)
+}
+
+# The agent's tools and GET /me/profile read the customer-serving table with the task role (no
+# SERVING_AWS_PROFILE: the default credential chain), never through the Bedrock profile.
+locals {
+  serving_environment = {
+    SERVING_BACKEND    = "dynamodb"
+    SERVING_TABLE_NAME = module.customer_serving.table_name
+    SERVING_AWS_REGION = var.region
+  }
+}
+
+# Exactly what agents/serving.py calls: GetItem (PROFILE, FX pairs) and Query (on PK, by SK prefix).
+resource "aws_iam_role_policy" "backend_serving_read" {
+  name = "read-customer-serving"
+  role = module.backend_service.task_role_name
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = ["dynamodb:GetItem", "dynamodb:Query"]
+      Resource = module.customer_serving.table_arn
+    }]
+  })
 }
 
 # Bedrock (bedrock_enabled, on by default). envs/dev-app creates the guardrail and the invoker
@@ -182,6 +207,23 @@ resource "aws_iam_role_policy" "backend_assume_bedrock" {
   })
 }
 
+# CloudFront's VPC origin connects from network interfaces in AWS's service-managed security group,
+# which AWS creates in the VPC with the first VPC origin (looked up, never managed here). The ALB
+# must allow that group as a source; a CIDR rule alone is not enough.
+data "aws_security_group" "cloudfront_vpc_origins" {
+  vpc_id = data.aws_vpc.default.id
+  name   = "CloudFront-VPCOrigins-Service-SG"
+}
+
+resource "aws_vpc_security_group_ingress_rule" "backend_alb_from_cloudfront" {
+  security_group_id            = module.backend_service.alb_security_group_id
+  description                  = "HTTP from CloudFront VPC origins"
+  ip_protocol                  = "tcp"
+  from_port                    = 80
+  to_port                      = 80
+  referenced_security_group_id = data.aws_security_group.cloudfront_vpc_origins.id
+}
+
 # HTTPS for the backend on the default *.cloudfront.net domain; nothing is cached. The ALB is
 # internal, so CloudFront reaches it through a VPC origin over AWS's network.
 module "backend_cdn" {
@@ -202,5 +244,26 @@ module "frontend_site" {
   comment       = "${local.name_prefix} frontend (HTTPS)"
 }
 
-# Later tasks plug in here the same way, e.g.:
-# module "serving"  { source = "../../modules/dynamodb" ... }  # recommendations for the agent
+# What the agent's tools read online, copied from the agent zone (gold/agent/) plus the
+# recommender's current output. Customer items: PK = CUST#<customer_id>, SK = PROFILE | RECO |
+# TXN#<ts>#<transaction_id> | CONTACT#<ts>#<interaction_id> | COMPLAINT#<ts>#<complaint_id> |
+# CAMPAIGN#<ts>#<send_id>. Public reference data: PK = REF#BRANCH, SK = <city>#<branch_id>;
+# PK = REF#FX, SK = <source_currency>#<target_currency>. Rebuilt from gold, so no TTL.
+module "customer_serving" {
+  source              = "../../modules/dynamodb"
+  name_prefix         = local.name_prefix
+  table_name          = "customer-serving"
+  deletion_protection = false # hackathon env: allow teardown
+}
+
+# Persisted chat sessions. PK = CUST#<customer_id>#SESSION#<session_id>; SK = SESSION (metadata,
+# failure count, language) | TURN#<ts>#<message_id> (user and assistant turns) | HANDOFF#<ts>.
+# The latest turns are a Query on PK with begins_with(SK, "TURN#"), newest first. Items expire
+# through expires_at (epoch seconds), e.g. 90 days after the last turn.
+module "conversations" {
+  source              = "../../modules/dynamodb"
+  name_prefix         = local.name_prefix
+  table_name          = "conversations"
+  ttl_attribute       = "expires_at"
+  deletion_protection = false # hackathon env: allow teardown
+}

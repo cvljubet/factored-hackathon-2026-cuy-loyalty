@@ -5,11 +5,12 @@ from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, Tool
 from pydantic_ai.models import Model
 
 from agents.context import AgentContext
-from agents.deps import AgentDeps, ProfileSource
+from agents.deps import AgentDeps
 from agents.engines.base import EngineResult
 from agents.engines.recommendation import RecommendationProvider
 from agents.inquiry_agent import inquiry_agent
 from agents.messages import message
+from agents.serving import ServingRepository
 from agents.sessions import VerifiedFact
 from agents.tools import ToolResult
 
@@ -29,17 +30,17 @@ class InquiryEngine:
     def __init__(
         self,
         model: Model,
-        profiles: ProfileSource,
+        serving: ServingRepository,
         recommendations: RecommendationProvider,
         max_rounds: int = MAX_ROUNDS,
     ):
         self.model = model
-        self.profiles = profiles
+        self.serving = serving
         self.recommendations = recommendations
         self.max_rounds = max_rounds
 
     def handle(self, context: AgentContext, user_message: str) -> EngineResult:
-        deps = AgentDeps(context, self.profiles, self.recommendations, self.max_rounds)
+        deps = AgentDeps(context, self.serving, self.recommendations, self.max_rounds)
         with capture_run_messages() as messages:
             try:
                 result = inquiry_agent.run_sync(

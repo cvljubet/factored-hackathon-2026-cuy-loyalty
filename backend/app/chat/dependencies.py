@@ -1,4 +1,3 @@
-from collections.abc import Mapping
 from functools import lru_cache
 from typing import Annotated, Any
 
@@ -18,22 +17,7 @@ from agents.models import (
 from agents.orchestrator import Orchestrator
 from agents.routing import Router, RuleBasedRouter
 from app.config import Settings, get_settings
-from app.customers.dependencies import get_customer_repository
-from app.customers.repository import CustomerRepository
-from app.customers.service import CustomerNotFoundError, get_customer_profile
-
-
-class RepositoryProfileSource:
-    """Serves the agent's get_my_profile tool from the CustomerRepository (minimal profile only)."""
-
-    def __init__(self, repository: CustomerRepository):
-        self.repository = repository
-
-    def get_profile(self, customer_id: str) -> Mapping[str, Any] | None:
-        try:
-            return get_customer_profile(self.repository, customer_id).model_dump()
-        except CustomerNotFoundError:
-            return None
+from app.customers.dependencies import get_serving_repository
 
 
 def bedrock_config(settings: Settings) -> BedrockConfig:
@@ -80,7 +64,7 @@ def get_orchestrator() -> Orchestrator:
     # One client for every Bedrock call: same credentials, region, timeouts and connection pool.
     client = bedrock_runtime_client(bedrock_config(settings)) if uses_bedrock(settings) else None
     return build_orchestrator(
-        profiles=RepositoryProfileSource(get_customer_repository()),
+        serving=get_serving_repository(),  # the same repository GET /me/profile reads
         model=build_inquiry_model(settings, client),
         router=build_router(settings, client),
         guardrail=build_guardrail(settings, client),

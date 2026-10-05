@@ -6,7 +6,7 @@ from agents.engines.recommendation import NotReadyRecommendationProvider
 from agents.local_model import local_model
 from agent_testkit import (
     CUSTOMER_ID,
-    RecordingProfileSource,
+    RecordingServing,
     ScriptedModel,
     answer,
     call_tool,
@@ -17,7 +17,7 @@ from agent_testkit import (
 
 @pytest.fixture
 def profiles():
-    return RecordingProfileSource()
+    return RecordingServing()
 
 
 def engine_with(model, profiles) -> InquiryEngine:
@@ -60,14 +60,14 @@ def test_instructions_follow_the_turn_language(profiles):
     assert {tool.name for tool in info.function_tools} >= {"get_my_profile", "get_my_products"}
 
 
-def test_unavailable_tool_result_is_passed_to_the_model(profiles):
+def test_unavailable_tool_result_is_passed_to_the_model():
     script = ScriptedModel([call_tool("get_my_products"), answer("Esa información aún no está disponible.")])
 
-    result = engine_with(script.model, profiles).handle(make_context(), "¿Qué productos tengo?")
+    result = engine_with(script.model, RecordingServing({})).handle(make_context(), "¿Qué productos tengo?")
 
     assert result.status == "answered"
     returned = script.requests[1][0][-1].parts[0]
-    assert (returned.content.status, returned.content.reason) == ("unavailable", "data_source_not_ready")
+    assert (returned.content.status, returned.content.reason) == ("unavailable", "profile_not_found")
 
 
 class TestRoundLimit:

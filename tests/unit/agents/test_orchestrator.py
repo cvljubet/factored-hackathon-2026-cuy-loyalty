@@ -12,7 +12,7 @@ from agent_testkit import (
     CUSTOMER_ID,
     OTHER_CUSTOMER_ID,
     FixedRecommendationProvider,
-    RecordingProfileSource,
+    RecordingServing,
     ScriptedModel,
     answer,
     call_tool,
@@ -25,11 +25,11 @@ SESSION = "session-1"
 class Harness:
     def __init__(self, llm_steps=(), recommendations=None, guardrail=None):
         self.llm = ScriptedModel(llm_steps)
-        self.profiles = RecordingProfileSource()
+        self.profiles = RecordingServing()
         self.handoffs = InMemoryHandoffStore()
         self.sessions = InMemorySessionStore()
         self.orchestrator = build_orchestrator(
-            profiles=self.profiles,
+            serving=self.profiles,
             model=self.llm.model,
             recommendations=recommendations,
             handoffs=self.handoffs,

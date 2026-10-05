@@ -32,6 +32,22 @@ columns (ids, segment, routing, coordinates) start with `bk_`, and the tools str
 sees a result. `AGENT_FORBIDDEN` lists customer columns no agent table may hold;
 `tests/integration/test_agent_gold.py` checks it.
 
+### Serving (`serving/`)
+
+`load_customer_serving.py` publishes the agent zone to the DynamoDB table `cuy-loyalty-dev-customer-serving`.
+It finds each table's files through the Glue Catalog and copies only the columns in that table's `FIELDS`
+(`CUSTOMER_FORBIDDEN` lists what never goes in). `customer_id` lives in `PK` only. The only `bk_` fields
+kept are `bk_response_code` and `bk_is_overdue`. Campaigns are served only when `valid_on_as_of`.
+`SK = RECO` is left for the ranking model.
+
+```bash
+uv run --no-project --with-requirements data/pipelines/serving/requirements.txt \
+  python data/pipelines/serving/load_customer_serving.py --profile cuy-loyalty --all --dry-run
+```
+
+Use `--table <name>` (repeatable) to load single tables, and `--customer-id <id>` or `--limit-customers N`
+for a sample. The loader refuses credentials for any account other than the team account.
+
 ### Data quality
 
 Every bronze file must have exactly the header in `COLUMNS` (`bronze_to_silver.py`): the data
