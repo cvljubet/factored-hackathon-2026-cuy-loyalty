@@ -5,14 +5,15 @@ the only caller; the frontend never talks to the agent directly. This package
 has no web framework dependency.
 
 Pydantic AI is used selectively: for the LLM-facing inquiry agent (tools and
-tool loop) and the future model router (structured output). The outer
+tool loop) and the model router (structured output). The outer
 orchestration stays plain application code.
 
 ## Flow of one turn (`orchestrator.py`)
 
 1. Load session state (failure count, language) for `(customer_id, session_id)`.
 2. Build an `AgentContext` with the authenticated `customer_id` passed in by the backend.
-3. Input guardrail (`guardrails.py`; no-op until Bedrock Guardrails).
+3. Input guardrail (`guardrails.py`: Bedrock `ApplyGuardrail` when configured, else no-op).
+   An intervention blocks the message; an unreachable guardrail blocks it and counts as a failure.
 4. Route (`routing.py`) to `inquiry | recommendation | escalation | out_of_scope`,
    with language, confidence, `sensitive_request` and `credit_decision`.
 5. Deterministic rules first, with no model involved:
@@ -36,10 +37,10 @@ orchestration stays plain application code.
 | `tools.py` | Tool domain logic and `ToolResult`; unfinished tools report `unavailable` |
 | `engines/` | Inquiry (runs the agent), recommendation (and its payload contract), escalation with handoff store |
 | `routing.py` | `Router` protocol, `RouteResult`, `RuleBasedRouter` (default) |
-| `model_router.py` | `ModelRouter` (structured output) and `HybridRouter` (model + deterministic checks); not enabled yet |
-| `models.py` | Bedrock Converse model configuration (Haiku, optional Sonnet fallback); not enabled yet |
+| `model_router.py` | `ModelRouter` (structured output) and `HybridRouter` (model + deterministic checks); `AGENT_ROUTER=bedrock` |
+| `models.py` | The shared Bedrock client (profile, timeouts) and Converse models (Haiku, optional Sonnet fallback); `AGENT_LLM=bedrock` |
 | `local_model.py` | Deterministic `FunctionModel` so the app runs without model access |
-| `guardrails.py`, `safety.py` | Guardrail protocol and no-op; sensitive-request and output-scan rules |
+| `guardrails.py`, `safety.py` | Guardrail protocol, no-op and Bedrock (`ApplyGuardrail`); sensitive-request and output-scan rules |
 | `sessions.py`, `factory.py` | Session state store (in-memory); `build_orchestrator()` |
 
 ## Security invariants
@@ -49,4 +50,5 @@ orchestration stays plain application code.
   argument a tool does not declare, so the model cannot pass or change `customer_id`.
 - Recommendation payloads for any customer other than the context's are refused.
 - Unfinished tools return `{"status": "unavailable"}`; nothing is invented.
-- Tests set `pydantic_ai.models.ALLOW_MODEL_REQUESTS = False`, so no test can reach Bedrock.
+- Tests set `pydantic_ai.models.ALLOW_MODEL_REQUESTS = False` and dummy AWS credentials
+  (`tests/unit/conftest.py`), so no test can reach Bedrock; the guardrail is tested with botocore's `Stubber`.

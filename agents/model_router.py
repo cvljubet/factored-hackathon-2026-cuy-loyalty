@@ -1,7 +1,6 @@
-"""Model-based routing with Pydantic AI structured output (for the future Bedrock Haiku router).
+"""Model-based routing with Pydantic AI structured output (Bedrock Haiku).
 
-Not enabled by default: the backend uses RuleBasedRouter until Bedrock is
-available. HybridRouter keeps the safety-relevant decisions deterministic by
+Used when AGENT_ROUTER=bedrock; the default is RuleBasedRouter. HybridRouter keeps the safety-relevant decisions deterministic by
 OR-ing the rule checks into whatever the model returns.
 """
 

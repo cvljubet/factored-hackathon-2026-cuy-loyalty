@@ -7,6 +7,7 @@ modules under `modules/` and wired into `envs/dev/main.tf`.
 ```
 bootstrap/          one-time: S3 bucket for Terraform state
 envs/dev/           the environment we deploy; composes the modules
+envs/dev-app/       Bedrock in the model account (own state; read by envs/dev)
 modules/data_lake/  lake bucket (bronze/ silver/ gold/) + artifacts bucket
 modules/iam/        Glue role, least privilege per layer
 modules/catalog/    Glue databases per layer, bronze crawler, Athena workgroup
@@ -16,6 +17,7 @@ modules/ecr/        container registry per service image (backend API)
 modules/ecs_service/ Fargate service + ALB + security groups + IAM roles + logs (backend API)
 modules/cloudfront_api/ HTTPS CloudFront distribution in front of the backend ALB (no caching)
 modules/static_site/ private S3 bucket + CloudFront (OAC, SPA routing) for the React frontend
+modules/bedrock_model_account/ guardrail, invoker role and invocation logging in the Bedrock (model) account
 ```
 
 `envs/dev` has one required variable (no default), so every plan/apply names the
@@ -93,6 +95,71 @@ read -rs -p "Password: " PASSWORD && echo
 aws cognito-idp admin-set-user-password --user-pool-id "$POOL_ID" \
   --username user@example.com --password "$PASSWORD" --permanent
 ```
+
+## Bedrock (`envs/dev-app`)
+
+The team account's Bedrock quotas are close to zero, so the models run in a second AWS account.
+`envs/dev-app` is a separate root with its own state (`envs/dev-app/terraform.tfstate` in the same
+bucket), so it never locks or changes `envs/dev`, and only whoever applies it needs model-account
+credentials. Its provider `aws.model` uses `-var model_account_profile=<profile>`; unset, it uses the
+team account.
+
+`module.bedrock` creates, in the model account:
+
+- the guardrail (Standard tier, Spanish and Portuguese): content filters, prompt-attack filter on
+  input, five denied topics, and **Block** for card numbers, CVV, PIN and IBAN, plus a published
+  version (editing the guardrail publishes a new one);
+- the `cuy-bedrock-invoker` role, trusted by the team account, with `bedrock:InvokeModel`,
+  `InvokeModelWithResponseStream` and `ApplyGuardrail`;
+- model invocation logging to CloudWatch (`/bedrock/<prefix>`, 14 days; one configuration per account
+  and Region, so set `enable_invocation_logging = false` to keep an existing one).
+
+### Credentials
+
+Two profiles in `~/.aws/config` (never in the repo). An admin one for Terraform, for example a role in
+the model account assumed from the team account (or `aws configure sso` if the account is in IAM
+Identity Center):
+
+```ini
+[profile cuy-model-admin]
+role_arn       = arn:aws:iam::<MODEL_ACCOUNT_ID>:role/<AdminRoleName>
+source_profile = cuy-loyalty
+region         = us-east-2
+```
+
+And, after the first apply, one that assumes the invoker role, for local runs and
+`scripts/bedrock_smoke.py` (`BEDROCK_PROFILE=cuy-bedrock`); ECS does the same with the task role:
+
+```ini
+[profile cuy-bedrock]
+role_arn       = arn:aws:iam::<MODEL_ACCOUNT_ID>:role/cuy-bedrock-invoker
+source_profile = cuy-loyalty
+region         = us-east-2
+```
+
+### Order
+
+1. Once per model account: in the Bedrock console (Ohio) an admin sends one message to Claude Haiku 4.5
+   (Anthropic asks for use-case details on first use), checks that the model answers from the CLI
+   (`aws bedrock-runtime converse --model-id us.anthropic.claude-haiku-4-5-20251001-v1:0 --messages '[{"role":"user","content":[{"text":"ok"}]}]' --region us-east-2 --profile <admin profile>`), and checks the quotas:
+   `aws service-quotas list-service-quotas --service-code bedrock --region us-east-2 --profile cuy-model-admin`.
+2. Apply `envs/dev-app` with team-account credentials (state bucket) plus the admin profile:
+
+   ```bash
+   cd infrastructure/terraform/envs/dev-app
+   terraform init -backend-config="bucket=$STATE_BUCKET"
+   terraform apply -var model_account_profile=cuy-model-admin
+   ```
+
+3. Smoke test from your machine:
+   `BEDROCK_PROFILE=cuy-bedrock BEDROCK_GUARDRAIL_ID=$(terraform output -raw bedrock_guardrail_id) BEDROCK_GUARDRAIL_VERSION=$(terraform output -raw bedrock_guardrail_version) uv run python scripts/bedrock_smoke.py` (from the repo root).
+4. Switch the backend over: apply `envs/dev` with `-var bedrock_state_bucket=$STATE_BUCKET` and an
+   image built from this branch (its entrypoint writes the `bedrock` profile). That gives the task role
+   `sts:AssumeRole` on the invoker role and sets `AGENT_LLM`/`AGENT_ROUTER=bedrock`, `BEDROCK_ROLE_ARN`,
+   `BEDROCK_PROFILE` and the guardrail ID and version. Without the variable the backend stays on
+   `AGENT_LLM=local`, exactly as before. The inquiry fallback is Sonnet 4.6 (Sonnet 5 and 5.5 are
+   not available to the model account); change it with `-var bedrock_inquiry_fallback_model_id=<id>`
+   after the same `converse` check, or turn it off with an empty value.
 
 ## Rules
 

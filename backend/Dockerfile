@@ -29,6 +29,8 @@ WORKDIR /app
 COPY --from=build /app/.venv /app/.venv
 COPY backend/app /app/backend/app
 COPY agents /app/agents
+# Writes the Bedrock assume-role profile when BEDROCK_ROLE_ARN is set (ECS), then runs CMD.
+COPY --chmod=0755 backend/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
 # /app on PYTHONPATH makes the top-level agents package importable next to backend/app.
 # AGENT_LLM=local: the deterministic stand-in model, so no Bedrock access is needed yet.
@@ -46,5 +48,6 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
     CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)"]
 
+ENTRYPOINT ["docker-entrypoint.sh"]
 # One worker on purpose: sessions and handoffs are in memory, so they must live in a single process.
 CMD ["uvicorn", "app.main:app", "--app-dir", "backend", "--host", "0.0.0.0", "--port", "8000", "--no-access-log"]

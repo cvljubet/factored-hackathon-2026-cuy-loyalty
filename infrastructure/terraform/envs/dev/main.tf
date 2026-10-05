@@ -91,13 +91,60 @@ module "backend_service" {
   allowed_prefix_list_ids = [data.aws_ec2_managed_prefix_list.cloudfront_origin_facing.id]
   allowed_cidrs           = var.backend_allowed_cidrs
 
-  environment = {
+  environment = merge({
     COGNITO_REGION        = var.region
     COGNITO_USER_POOL_ID  = module.auth.user_pool_id
     COGNITO_APP_CLIENT_ID = module.auth.user_pool_client_id
     CORS_ALLOW_ORIGINS    = jsonencode(var.backend_cors_origins)
-    AGENT_LLM             = "local"
+  }, local.agent_environment)
+}
+
+# Bedrock (opt-in with -var bedrock_state_bucket=<state bucket>). envs/dev-app creates the
+# guardrail and the invoker role in the model account; apply it first. The task role may only
+# assume that role, and backend/docker-entrypoint.sh turns BEDROCK_ROLE_ARN into the AWS profile
+# the backend's Bedrock client uses (BEDROCK_PROFILE); other AWS calls keep the task role.
+data "terraform_remote_state" "app" {
+  count   = var.bedrock_state_bucket == null ? 0 : 1
+  backend = "s3"
+  config = {
+    bucket = var.bedrock_state_bucket
+    key    = "envs/dev-app/terraform.tfstate"
+    region = "us-east-2"
   }
+}
+
+locals {
+  bedrock = var.bedrock_state_bucket == null ? null : data.terraform_remote_state.app[0].outputs
+
+  agent_environment = local.bedrock == null ? tomap({ AGENT_LLM = "local" }) : tomap(merge(
+    {
+      AGENT_LLM                 = "bedrock"
+      AGENT_ROUTER              = "bedrock"
+      BEDROCK_REGION            = local.bedrock.bedrock_region
+      BEDROCK_ROLE_ARN          = local.bedrock.bedrock_invoker_role_arn
+      BEDROCK_PROFILE           = "bedrock"
+      BEDROCK_GUARDRAIL_ID      = local.bedrock.bedrock_guardrail_id
+      BEDROCK_GUARDRAIL_VERSION = local.bedrock.bedrock_guardrail_version
+    },
+    var.bedrock_inquiry_fallback_model_id == "" ? {} : {
+      BEDROCK_INQUIRY_FALLBACK_MODEL_ID = var.bedrock_inquiry_fallback_model_id
+    },
+  ))
+}
+
+resource "aws_iam_role_policy" "backend_assume_bedrock" {
+  count = local.bedrock == null ? 0 : 1
+  name  = "assume-bedrock-invoker"
+  role  = module.backend_service.task_role_name
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = "sts:AssumeRole"
+      Resource = local.bedrock.bedrock_invoker_role_arn
+    }]
+  })
 }
 
 # HTTPS for the backend on the default *.cloudfront.net domain; nothing is cached.

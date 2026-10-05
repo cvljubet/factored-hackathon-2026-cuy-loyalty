@@ -1,13 +1,16 @@
 from functools import lru_cache
 from typing import Literal
 
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     """Backend settings, read from environment variables or the repo-root .env."""
 
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    # env_ignore_empty: an empty variable (e.g. BEDROCK_INQUIRY_FALLBACK_MODEL_ID= from a task
+    # definition) means "not set", so optional features stay off instead of getting "".
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore", env_ignore_empty=True)
 
     # Cognito user pool and SPA client (terraform -chdir=infrastructure/terraform/envs/dev output).
     # These identify the pool; they are not secrets.
@@ -21,18 +24,39 @@ class Settings(BaseSettings):
     customer_repository: Literal["memory"] = "memory"
 
     # Chat agent models. "local" is a deterministic stand-in that needs no AWS access;
-    # "bedrock" runs Bedrock Converse via Pydantic AI (not enabled until access is provisioned).
+    # "bedrock" runs Bedrock Converse via Pydantic AI.
     agent_llm: Literal["local", "bedrock"] = "local"
     agent_router: Literal["rules", "bedrock"] = "rules"
     # Bedrock credentials come from the standard AWS chain (env, profile or task role), never settings.
     bedrock_region: str = "us-east-2"
+    # Optional named AWS profile used for Bedrock calls only (e.g. a role in the account that runs
+    # the models). Unset: the default chain. Other AWS calls never use it.
+    bedrock_profile: str | None = None
     bedrock_inquiry_model_id: str = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
-    # Optional inquiry fallback, e.g. us.anthropic.claude-sonnet-5-5.
+    # Optional inquiry fallback, e.g. us.anthropic.claude-sonnet-4-6 (a model the account can invoke).
     bedrock_inquiry_fallback_model_id: str | None = None
     bedrock_router_model_id: str = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+    # Per-request limits, so a slow or throttled call fails over (or fails the turn) well within
+    # the load balancer and CloudFront timeouts. Attempts include the first try ("standard" retries).
+    bedrock_read_timeout_seconds: float = Field(default=20.0, gt=0)
+    bedrock_max_attempts: int = Field(default=2, ge=1)
+    # Bedrock Guardrails (ApplyGuardrail on input and output). Off unless both are set.
+    bedrock_guardrail_id: str | None = None
+    bedrock_guardrail_version: str | None = None
 
     # Browser origins allowed to call the API (the Vite dev server by default).
     cors_allow_origins: list[str] = ["http://localhost:5173"]
+
+    @model_validator(mode="after")
+    def _guardrail_needs_id_and_version(self) -> "Settings":
+        # Half a guardrail configuration would silently leave it off; refuse to start instead.
+        if (self.bedrock_guardrail_id is None) != (self.bedrock_guardrail_version is None):
+            raise ValueError("Set both BEDROCK_GUARDRAIL_ID and BEDROCK_GUARDRAIL_VERSION, or neither")
+        return self
+
+    @property
+    def bedrock_guardrail_enabled(self) -> bool:
+        return self.bedrock_guardrail_id is not None and self.bedrock_guardrail_version is not None
 
     @property
     def cognito_issuer(self) -> str:

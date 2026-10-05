@@ -91,3 +91,8 @@ output "frontend_cloudfront_domain" {
 output "frontend_https_url" {
   value = "https://${module.frontend_site.domain_name}"
 }
+
+output "backend_agent_llm" {
+  description = "local, or bedrock when bedrock_state_bucket is set."
+  value       = local.agent_environment["AGENT_LLM"]
+}

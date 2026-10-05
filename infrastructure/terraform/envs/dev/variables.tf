@@ -56,3 +56,17 @@ variable "backend_cors_origins" {
     error_message = "List explicit origins; a wildcard (*) is not allowed."
   }
 }
+
+# Opt-in Bedrock for the backend: the state bucket holding envs/dev-app's state (the same bucket
+# this stack uses). Null keeps the backend on the local deterministic model (AGENT_LLM=local).
+variable "bedrock_state_bucket" {
+  description = "State bucket of envs/dev-app; set it to run the agent on Bedrock. Null = AGENT_LLM=local."
+  type        = string
+  default     = null
+}
+
+variable "bedrock_inquiry_fallback_model_id" {
+  description = "Inquiry fallback model when Bedrock is on; must be one the model account can invoke (Sonnet 5 and 5.5 are not). Empty = no fallback."
+  type        = string
+  default     = "us.anthropic.claude-sonnet-4-6"
+}
