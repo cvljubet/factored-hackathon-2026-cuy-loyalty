@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter, useLocation } from 'react-router-dom'
 import { describe, expect, it, vi } from 'vitest'
 import type { ApiClient } from './api/client'
+import { ApiContext } from './api/context'
 import { AppRoutes } from './App'
 import type { AuthService } from './auth/authService'
 import { AuthProvider } from './auth/AuthProvider'
@@ -17,12 +18,14 @@ function CurrentPath() {
 function renderApp(service: AuthService, path: string, api: ApiClient = createFakeApiClient()) {
   return render(
     <AuthProvider service={service}>
-      <ProfileProvider api={api}>
-        <MemoryRouter initialEntries={[path]}>
-          <AppRoutes />
-          <CurrentPath />
-        </MemoryRouter>
-      </ProfileProvider>
+      <ApiContext.Provider value={api}>
+        <ProfileProvider api={api}>
+          <MemoryRouter initialEntries={[path]}>
+            <AppRoutes />
+            <CurrentPath />
+          </MemoryRouter>
+        </ProfileProvider>
+      </ApiContext.Provider>
     </AuthProvider>,
   )
 }

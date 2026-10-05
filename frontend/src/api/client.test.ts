@@ -74,3 +74,80 @@ describe('readApiBaseUrl', () => {
     expect(() => readApiBaseUrl({})).toThrow(/VITE_API_BASE_URL/)
   })
 })
+
+describe('createApiClient().sendChat', () => {
+  const chatBody = {
+    session_id: 'abc12345session',
+    reply: 'Estos son los datos de tu perfil.',
+    engine: 'inquiry',
+    language: 'es',
+    status: 'answered',
+    escalated: false,
+    handoff_id: null,
+  }
+
+  it('POSTs the message to /chat with the ID token as a Bearer header', async () => {
+    const { client, fetch } = setup({ response: jsonResponse(200, chatBody) })
+
+    await client.sendChat({ message: 'Muéstrame mi perfil', language: 'es' })
+
+    const [url, init] = fetch.mock.calls[0]
+    expect(url).toBe('http://localhost:8000/chat')
+    expect(init?.method).toBe('POST')
+    const headers = new Headers(init?.headers)
+    expect(headers.get('Authorization')).toBe('Bearer id.token.value')
+    expect(headers.get('Content-Type')).toBe('application/json')
+  })
+
+  it('sends only the fields the backend ChatRequest accepts, never a customer id', async () => {
+    const { client, fetch } = setup()
+    fetch.mockImplementation(async () => jsonResponse(200, chatBody))
+
+    await client.sendChat({ message: 'hola', sessionId: 'abc12345session', language: 'pt' })
+    await client.sendChat({ message: 'primera' })
+
+    expect(JSON.parse(fetch.mock.calls[0][1]?.body as string)).toEqual({
+      message: 'hola',
+      session_id: 'abc12345session',
+      language: 'pt',
+    })
+    expect(JSON.parse(fetch.mock.calls[1][1]?.body as string)).toEqual({ message: 'primera' })
+    expect(String(fetch.mock.calls[0][1]?.body)).not.toMatch(/customer/i)
+  })
+
+  it('maps the backend ChatResponse', async () => {
+    const { client } = setup({
+      response: jsonResponse(200, { ...chatBody, engine: 'escalation', status: 'escalated', escalated: true, handoff_id: 'HO-1' }),
+    })
+
+    expect(await client.sendChat({ message: 'Quiero un asesor' })).toEqual({
+      sessionId: 'abc12345session',
+      reply: 'Estos son los datos de tu perfil.',
+      engine: 'escalation',
+      language: 'es',
+      status: 'escalated',
+      escalated: true,
+      handoffId: 'HO-1',
+    })
+  })
+
+  it('fails with 401 without calling the backend when there is no session', async () => {
+    const { client, fetch } = setup({ token: null })
+
+    await expect(client.sendChat({ message: 'hola' })).rejects.toMatchObject({ status: 401 })
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it.each([401, 403, 422, 500])('throws an ApiError with status %i', async (status) => {
+    const { client } = setup({ response: jsonResponse(status, { detail: 'internal detail' }) })
+
+    await expect(client.sendChat({ message: 'hola' })).rejects.toMatchObject({ name: 'ApiError', status })
+  })
+
+  it('reports a network failure as status 0', async () => {
+    const { client, fetch } = setup()
+    fetch.mockRejectedValue(new TypeError('Failed to fetch'))
+
+    await expect(client.sendChat({ message: 'hola' })).rejects.toMatchObject({ name: 'ApiError', status: 0 })
+  })
+})
