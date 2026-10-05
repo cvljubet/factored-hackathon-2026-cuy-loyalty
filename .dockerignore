@@ -5,6 +5,7 @@
 !pyproject.toml
 !uv.lock
 !backend/app
+!backend/docker-entrypoint.sh
 !agents
 
 # Never ship local secrets or build leftovers, even inside allowed folders.

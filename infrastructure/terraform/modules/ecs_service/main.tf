@@ -1,8 +1,9 @@
-# One container service on ECS Fargate behind an internet-facing ALB.
-# The task runs in public subnets with a public IP (no NAT gateway needed to reach
-# ECR, CloudWatch Logs or Cognito), but its security group only accepts traffic
-# from the load balancer. The load balancer only accepts var.allowed_prefix_list_ids
-# (e.g. CloudFront) and var.allowed_cidrs.
+# One container service on ECS Fargate behind an ALB: internet-facing by default, or
+# internal (var.internal, in var.alb_subnet_ids) when CloudFront reaches it through a
+# VPC origin. The task runs in public subnets with a public IP (no NAT gateway needed to
+# reach ECR, CloudWatch Logs, Cognito or Bedrock), but its security group only accepts
+# traffic from the load balancer. The load balancer only accepts
+# var.allowed_prefix_list_ids (e.g. CloudFront) and var.allowed_cidrs.
 data "aws_caller_identity" "current" {}
 data "aws_region" "current" {}
 
@@ -125,9 +126,9 @@ resource "aws_vpc_security_group_egress_rule" "task_https" {
 resource "aws_lb" "this" {
   name                       = local.name
   load_balancer_type         = "application"
-  internal                   = false
+  internal                   = var.internal
   security_groups            = [aws_security_group.alb.id]
-  subnets                    = var.subnet_ids
+  subnets                    = var.alb_subnet_ids != null ? var.alb_subnet_ids : var.subnet_ids
   drop_invalid_header_fields = true
   enable_deletion_protection = false # dev env: allow teardown
 }

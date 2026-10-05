@@ -71,40 +71,125 @@ data "aws_subnets" "default" {
   }
 }
 
-# CloudFront's origin-facing addresses: the only source the backend load balancer needs.
-data "aws_ec2_managed_prefix_list" "cloudfront_origin_facing" {
-  name = "com.amazonaws.global.cloudfront.origin-facing"
+locals {
+  # The task runs in two of the default (public) subnets: a public IP gives it outbound access
+  # to ECR, Cognito, STS and Bedrock without a NAT gateway; nothing can connect in.
+  backend_task_subnet_ids = slice(sort(data.aws_subnets.default.ids), 0, 2)
 }
 
-# Backend + agent API on ECS Fargate behind an HTTP ALB that only CloudFront (plus any optional
-# backend_allowed_cidrs) can reach. One task: sessions and handoffs are in process memory.
-module "backend_service" {
-  source                  = "../../modules/ecs_service"
-  name_prefix             = local.name_prefix
-  service_name            = "backend"
-  vpc_id                  = data.aws_vpc.default.id
-  subnet_ids              = slice(sort(data.aws_subnets.default.ids), 0, 2)
-  image                   = "${module.backend_registry.repository_url}:${var.backend_image_tag}"
-  cpu                     = 256  # 0.25 vCPU
-  memory                  = 1024 # 1 GB
-  desired_count           = 1
-  allowed_prefix_list_ids = [data.aws_ec2_managed_prefix_list.cloudfront_origin_facing.id]
-  allowed_cidrs           = var.backend_allowed_cidrs
+data "aws_subnet" "backend_task" {
+  count = 2
+  id    = local.backend_task_subnet_ids[count.index]
+}
 
-  environment = {
+# Private subnets for the internal load balancer, in the same AZs as the task (an ALB only
+# routes to targets in its own AZs). Their route table has only the VPC's local route, so
+# nothing in them is reachable from the internet. CloudFront gets in through its VPC origin.
+resource "aws_subnet" "backend_private" {
+  count             = 2
+  vpc_id            = data.aws_vpc.default.id
+  availability_zone = data.aws_subnet.backend_task[count.index].availability_zone
+  cidr_block        = var.backend_private_subnet_cidrs[count.index]
+  tags              = { Name = "${local.name_prefix}-backend-private-${data.aws_subnet.backend_task[count.index].availability_zone}" }
+}
+
+resource "aws_route_table" "backend_private" {
+  vpc_id = data.aws_vpc.default.id
+  tags   = { Name = "${local.name_prefix}-backend-private" }
+}
+
+resource "aws_route_table_association" "backend_private" {
+  count          = 2
+  subnet_id      = aws_subnet.backend_private[count.index].id
+  route_table_id = aws_route_table.backend_private.id
+}
+
+# Backend + agent API on ECS Fargate behind an internal HTTP ALB that only CloudFront reaches,
+# through its VPC origin, so the Cognito token never crosses the internet in clear.
+# One task: sessions and handoffs are in process memory.
+module "backend_service" {
+  source         = "../../modules/ecs_service"
+  name_prefix    = local.name_prefix
+  service_name   = "backend"
+  vpc_id         = data.aws_vpc.default.id
+  subnet_ids     = local.backend_task_subnet_ids
+  internal       = true
+  alb_subnet_ids = aws_subnet.backend_private[*].id
+  image          = "${module.backend_registry.repository_url}:${var.backend_image_tag}"
+  cpu            = 256  # 0.25 vCPU
+  memory         = 1024 # 1 GB
+  desired_count  = var.backend_desired_count
+  # CloudFront's VPC origin connects from a network interface inside the VPC; the ALB is
+  # internal, so nothing outside the VPC can reach it either way.
+  allowed_cidrs = [data.aws_vpc.default.cidr_block]
+
+  environment = merge({
     COGNITO_REGION        = var.region
     COGNITO_USER_POOL_ID  = module.auth.user_pool_id
     COGNITO_APP_CLIENT_ID = module.auth.user_pool_client_id
     CORS_ALLOW_ORIGINS    = jsonencode(var.backend_cors_origins)
-    AGENT_LLM             = "local"
+  }, local.agent_environment)
+}
+
+# Bedrock (bedrock_enabled, on by default). envs/dev-app creates the guardrail and the invoker
+# role in the model account and must be applied first; its state sits in the same bucket as
+# this stack's (bootstrap names it <project>-tfstate-<account id>). The task role may only
+# assume that role, and backend/docker-entrypoint.sh turns BEDROCK_ROLE_ARN into the AWS profile
+# the backend's Bedrock client uses (BEDROCK_PROFILE); other AWS calls keep the task role.
+data "aws_caller_identity" "current" {}
+
+data "terraform_remote_state" "app" {
+  count   = var.bedrock_enabled ? 1 : 0
+  backend = "s3"
+  config = {
+    bucket = "${var.project}-tfstate-${data.aws_caller_identity.current.account_id}"
+    key    = "envs/dev-app/terraform.tfstate"
+    region = "us-east-2"
   }
 }
 
-# HTTPS for the backend on the default *.cloudfront.net domain; nothing is cached.
+locals {
+  bedrock = var.bedrock_enabled ? data.terraform_remote_state.app[0].outputs : null
+
+  agent_environment = local.bedrock == null ? tomap({ AGENT_LLM = "local" }) : tomap(merge(
+    {
+      AGENT_LLM                 = "bedrock"
+      AGENT_ROUTER              = "bedrock"
+      BEDROCK_REGION            = local.bedrock.bedrock_region
+      BEDROCK_ROLE_ARN          = local.bedrock.bedrock_invoker_role_arn
+      BEDROCK_PROFILE           = "bedrock"
+      BEDROCK_GUARDRAIL_ID      = local.bedrock.bedrock_guardrail_id
+      BEDROCK_GUARDRAIL_VERSION = local.bedrock.bedrock_guardrail_version
+    },
+    var.bedrock_inquiry_fallback_model_id == "" ? {} : {
+      BEDROCK_INQUIRY_FALLBACK_MODEL_ID = var.bedrock_inquiry_fallback_model_id
+    },
+  ))
+}
+
+resource "aws_iam_role_policy" "backend_assume_bedrock" {
+  count = local.bedrock == null ? 0 : 1
+  name  = "assume-bedrock-invoker"
+  role  = module.backend_service.task_role_name
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = "sts:AssumeRole"
+      Resource = local.bedrock.bedrock_invoker_role_arn
+    }]
+  })
+}
+
+# HTTPS for the backend on the default *.cloudfront.net domain; nothing is cached. The ALB is
+# internal, so CloudFront reaches it through a VPC origin over AWS's network.
 module "backend_cdn" {
   source             = "../../modules/cloudfront_api"
   name_prefix        = local.name_prefix
   origin_domain_name = module.backend_service.alb_dns_name
+  use_vpc_origin     = true
+  vpc_origin_alb_arn = module.backend_service.alb_arn
   comment            = "${local.name_prefix} backend API (HTTPS)"
 }
 

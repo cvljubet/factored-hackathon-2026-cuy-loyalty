@@ -6,7 +6,7 @@ customer parameter (checked at registration below), and Pydantic AI rejects any
 argument a tool does not declare, so a model cannot pass or change customer_id.
 
 The model is chosen per run (agents.models): a local FunctionModel, a test model,
-or Bedrock Converse once enabled.
+or Bedrock Converse (AGENT_LLM=bedrock).
 """
 
 import inspect

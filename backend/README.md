@@ -33,9 +33,39 @@ Copy `.env.example` (repo root) to `.env` and fill in the Cognito values from
 | `AGENT_LLM` | Optional: `local` (default, deterministic stand-in, no AWS) or `bedrock` (Converse via Pydantic AI) |
 | `AGENT_ROUTER` | Optional: `rules` (default) or `bedrock` (Haiku structured output OR-ed with the deterministic checks) |
 | `BEDROCK_REGION` | Optional, default `us-east-2`; credentials come from the standard AWS chain |
+| `BEDROCK_PROFILE` | Optional AWS profile used **only** for Bedrock calls (e.g. a role in the account that runs the models); unset uses the default chain |
 | `BEDROCK_INQUIRY_MODEL_ID` | Optional, default `us.anthropic.claude-haiku-4-5-20251001-v1:0` |
-| `BEDROCK_INQUIRY_FALLBACK_MODEL_ID` | Optional, e.g. `us.anthropic.claude-sonnet-5-5` |
-| `BEDROCK_ROUTER_MODEL_ID` | Optional, default `us.anthropic.claude-haiku-4-5-20251001-v1:0` |
+| `BEDROCK_INQUIRY_FALLBACK_MODEL_ID` | Optional inquiry fallback, used when the primary model call fails, e.g. `us.anthropic.claude-sonnet-4-6` (Sonnet 5 and 5.5 are not available to our model account) |
+| `BEDROCK_ROUTER_MODEL_ID` | Optional, default `us.anthropic.claude-haiku-4-5-20251001-v1:0` (keep a model that supports forced tool choice) |
+| `BEDROCK_READ_TIMEOUT_SECONDS` | Optional, default `20`; per Bedrock request |
+| `BEDROCK_MAX_ATTEMPTS` | Optional, default `2`; attempts per Bedrock request, the first one included |
+| `BEDROCK_GUARDRAIL_ID`, `BEDROCK_GUARDRAIL_VERSION` | Optional; set both to check every message and reply with `ApplyGuardrail` (startup fails if only one is set) |
+
+An empty variable counts as unset. Never put AWS keys in `.env`; use a profile
+(`aws configure sso` or `aws configure`) locally and the ECS task role when deployed.
+
+### Bedrock
+
+With `AGENT_LLM=bedrock` the inquiry agent runs on Bedrock Converse; with
+`AGENT_ROUTER=bedrock` routing does too, with the deterministic checks (human request,
+credit decision, credit score or income) still applied on top and the rule-based router
+as fallback. All Bedrock calls share one client (region, profile, timeouts).
+
+When the guardrail is configured, an intervention blocks the message or reply. If the
+guardrail can't be reached the turn is blocked too, and two such turns in a row hand
+the customer to a human; interventions never do.
+
+IAM permissions for whoever makes the calls (the ECS task role, or the role behind
+`BEDROCK_PROFILE`): `bedrock:InvokeModel` on the inference profiles and their
+foundation models in every region the profile routes to (us-east-1, us-east-2,
+us-west-2), and `bedrock:ApplyGuardrail` on the guardrail when it's enabled.
+
+Live check, a few Bedrock requests (unit tests never call AWS):
+
+```sh
+BEDROCK_PROFILE=<profile> BEDROCK_GUARDRAIL_ID=<id> BEDROCK_GUARDRAIL_VERSION=<n> \
+  uv run python scripts/bedrock_smoke.py
+```
 
 ## Customer data
 

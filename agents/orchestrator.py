@@ -14,7 +14,7 @@ from agents.engines.base import EngineResult, ResultStatus
 from agents.engines.escalation import EscalationEngine
 from agents.engines.inquiry import InquiryEngine
 from agents.engines.recommendation import RecommendationEngine
-from agents.guardrails import Guardrail
+from agents.guardrails import GUARDRAIL_UNAVAILABLE, Guardrail
 from agents.messages import message
 from agents.routing import Engine, RouteResult, Router
 from agents.safety import redact, scan_output
@@ -137,7 +137,12 @@ class Orchestrator:
         """The turn's result, with the context updated to the routed language."""
         verdict = self.guardrail.check_input(context, user_message)
         if not verdict.allowed:
-            blocked = EngineResult(reply=message("input_blocked", context.language), status="blocked")
+            # An intervention (e.g. a prompt attack) is not a failure to help, so it never escalates.
+            # An unreachable guardrail is: two in a row hand the customer to a human.
+            unavailable = verdict.reason == GUARDRAIL_UNAVAILABLE
+            blocked = EngineResult(
+                reply=message("input_blocked", context.language), status="blocked", failed=unavailable
+            )
             return context, None, "out_of_scope", blocked, verdict.reason or "input_guardrail"
 
         route = self.router.route(context, user_message)

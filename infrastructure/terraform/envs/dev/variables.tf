@@ -25,21 +25,29 @@ variable "backend_image_tag" {
   }
 }
 
-# The load balancer is reached through CloudFront. This only adds optional direct HTTP access
-# (e.g. a team IP for debugging); never send Cognito tokens over it.
-variable "backend_allowed_cidrs" {
-  description = "Extra CIDRs allowed to reach the backend load balancer directly over HTTP. Empty = CloudFront only."
-  type        = list(string)
-  default     = []
+# 0 stops the backend (and its Bedrock calls) without destroying anything; 1 starts it again.
+# Never more than 1 while sessions and handoffs live in process memory.
+variable "backend_desired_count" {
+  description = "Backend tasks: 1 to run, 0 to stop without destroying resources."
+  type        = number
+  default     = 1
 
   validation {
-    condition     = alltrue([for cidr in var.backend_allowed_cidrs : can(cidrhost(cidr, 0))])
-    error_message = "backend_allowed_cidrs must be a list of valid CIDRs, e.g. [\"203.0.113.10/32\"]."
+    condition     = contains([0, 1], var.backend_desired_count)
+    error_message = "backend_desired_count must be 0 or 1 (sessions live in process memory)."
   }
+}
+
+# Two free ranges in the default VPC (172.31.0.0/16; its default subnets use the first /20s)
+# for the internal load balancer's private subnets.
+variable "backend_private_subnet_cidrs" {
+  description = "CIDRs of the two private subnets for the internal backend load balancer."
+  type        = list(string)
+  default     = ["172.31.128.0/24", "172.31.129.0/24"]
 
   validation {
-    condition     = !contains(var.backend_allowed_cidrs, "0.0.0.0/0")
-    error_message = "The HTTP load balancer must not be open to the whole internet (0.0.0.0/0)."
+    condition     = length(var.backend_private_subnet_cidrs) == 2 && alltrue([for cidr in var.backend_private_subnet_cidrs : can(cidrhost(cidr, 0))])
+    error_message = "backend_private_subnet_cidrs must be two valid CIDRs inside the default VPC."
   }
 }
 
@@ -55,4 +63,18 @@ variable "backend_cors_origins" {
     condition     = !contains(var.backend_cors_origins, "*")
     error_message = "List explicit origins; a wildcard (*) is not allowed."
   }
+}
+
+# Bedrock for the agent; envs/dev-app must be applied first. false = AGENT_LLM=local, the
+# deterministic stand-in that needs no model access.
+variable "bedrock_enabled" {
+  description = "Run the agent on Bedrock (needs envs/dev-app applied). false = AGENT_LLM=local."
+  type        = bool
+  default     = true
+}
+
+variable "bedrock_inquiry_fallback_model_id" {
+  description = "Inquiry fallback model when Bedrock is on; must be one the model account can invoke (Sonnet 5 and 5.5 are not). Empty = no fallback."
+  type        = string
+  default     = "us.anthropic.claude-sonnet-4-6"
 }
