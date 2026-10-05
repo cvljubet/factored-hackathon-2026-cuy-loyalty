@@ -12,6 +12,7 @@ modules/iam/        Glue role, least privilege per layer
 modules/catalog/    Glue databases per layer, bronze crawler, Athena workgroup
 modules/glue_etl/   PySpark jobs (data/pipelines/glue) + workflow silver -> gold
 modules/cognito/    user pool + SPA app client for the React login
+modules/ecr/        container registry per service image (backend API)
 ```
 
 ## Deploy

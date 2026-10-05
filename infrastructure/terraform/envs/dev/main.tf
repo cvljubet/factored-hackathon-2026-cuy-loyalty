@@ -46,6 +46,14 @@ module "auth" {
   deletion_protection = false # hackathon env: allow teardown
 }
 
+# Registry for the backend API image (backend/Dockerfile).
+module "backend_registry" {
+  source          = "../../modules/ecr"
+  name_prefix     = local.name_prefix
+  repository_name = "backend"
+  force_delete    = true # hackathon env: allow teardown
+}
+
 # Later tasks plug in here the same way, e.g.:
 # module "serving"  { source = "../../modules/dynamodb" ... }  # recommendations for the agent
 # module "app"      { source = "../../modules/ecs_service" ... } # backend + agent API
