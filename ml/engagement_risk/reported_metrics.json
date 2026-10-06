@@ -1,0 +1,39 @@
+{
+  "source": "notebooks/engagement_risk_feasibility_v1.ipynb, sections 12 and 14 (values rounded to 4 decimals as printed)",
+  "target": "low_engagement_next_90d",
+  "protocol": "All models fitted on the 4 train snapshots; LightGBM parameters, tree count and every decision threshold chosen on validation; the test snapshot was evaluated once with everything frozen.",
+  "population_rows": {
+    "2024-07-01": 100889, "2024-10-01": 105030, "2025-01-01": 109299, "2025-04-01": 113452,
+    "2025-07-01": 117635, "2025-10-01": 121851, "2026-01-01": 126053
+  },
+  "validation": {
+    "snapshots": ["2025-07-01", "2025-10-01"],
+    "rows": 239486,
+    "models": {
+      "majority": {"prevalence": 0.3911, "roc_auc": 0.5, "pr_auc": 0.3911, "precision": 0.0, "recall": 0.0, "f1": 0.0, "recall_at_top10": 0.1008, "recall_at_top20": 0.2001, "precision_at_top20": 0.3913, "lift_at_top20": 1.0004},
+      "recency_rule": {"prevalence": 0.3911, "roc_auc": 0.6291, "pr_auc": 0.5295, "precision": 0.4067, "recall": 0.9161, "f1": 0.5634, "recall_at_top10": 0.1656, "recall_at_top20": 0.2995, "precision_at_top20": 0.5858, "lift_at_top20": 1.4976},
+      "frequency_rule": {"prevalence": 0.3911, "roc_auc": 0.6849, "pr_auc": 0.5299, "precision": 0.5014, "recall": 0.7674, "f1": 0.6065, "recall_at_top10": 0.1560, "recall_at_top20": 0.3012, "precision_at_top20": 0.5890, "lift_at_top20": 1.5060},
+      "recency_frequency_ranks": {"prevalence": 0.3911, "roc_auc": 0.6726, "pr_auc": 0.5524, "precision": 0.4585, "recall": 0.8504, "f1": 0.5957, "recall_at_top10": 0.1656, "recall_at_top20": 0.3014, "precision_at_top20": 0.5894, "lift_at_top20": 1.5069},
+      "logistic_regression_transaction_features": {"prevalence": 0.3911, "roc_auc": 0.7290, "pr_auc": 0.5935, "precision": 0.5239, "recall": 0.7981, "f1": 0.6325, "recall_at_top10": 0.1718, "recall_at_top20": 0.3327, "precision_at_top20": 0.6507, "lift_at_top20": 1.6635},
+      "logistic_regression_all_features": {"prevalence": 0.3911, "roc_auc": 0.7623, "pr_auc": 0.6404, "precision": 0.5545, "recall": 0.7920, "f1": 0.6523, "recall_at_top10": 0.1872, "recall_at_top20": 0.3573, "precision_at_top20": 0.6987, "lift_at_top20": 1.7864},
+      "lightgbm": {"prevalence": 0.3911, "roc_auc": 0.7657, "pr_auc": 0.6478, "precision": 0.5595, "recall": 0.7876, "f1": 0.6543, "recall_at_top10": 0.1885, "recall_at_top20": 0.3637, "precision_at_top20": 0.7112, "lift_at_top20": 1.8183}
+    }
+  },
+  "test": {
+    "snapshots": ["2026-01-01"],
+    "rows": 126053,
+    "models": {
+      "majority": {"prevalence": 0.3939, "roc_auc": 0.5, "pr_auc": 0.3939, "precision": 0.0, "recall": 0.0, "f1": 0.0, "recall_at_top10": 0.0994, "recall_at_top20": 0.2002, "precision_at_top20": 0.3942, "lift_at_top20": 1.0009},
+      "recency_rule": {"prevalence": 0.3939, "roc_auc": 0.6290, "pr_auc": 0.5326, "precision": 0.4099, "recall": 0.9198, "f1": 0.5671, "recall_at_top10": 0.1661, "recall_at_top20": 0.2977, "precision_at_top20": 0.5862, "lift_at_top20": 1.4883},
+      "frequency_rule": {"prevalence": 0.3939, "roc_auc": 0.6835, "pr_auc": 0.5314, "precision": 0.5043, "recall": 0.7612, "f1": 0.6067, "recall_at_top10": 0.1535, "recall_at_top20": 0.2993, "precision_at_top20": 0.5894, "lift_at_top20": 1.4964},
+      "recency_frequency_ranks": {"prevalence": 0.3939, "roc_auc": 0.6720, "pr_auc": 0.5554, "precision": 0.4627, "recall": 0.8494, "f1": 0.5991, "recall_at_top10": 0.1661, "recall_at_top20": 0.2994, "precision_at_top20": 0.5897, "lift_at_top20": 1.4972},
+      "logistic_regression_transaction_features": {"prevalence": 0.3939, "roc_auc": 0.7282, "pr_auc": 0.5974, "precision": 0.5255, "recall": 0.7931, "f1": 0.6321, "recall_at_top10": 0.1713, "recall_at_top20": 0.3330, "precision_at_top20": 0.6558, "lift_at_top20": 1.6650},
+      "logistic_regression_all_features": {"prevalence": 0.3939, "roc_auc": 0.7646, "pr_auc": 0.6504, "precision": 0.5660, "recall": 0.7755, "f1": 0.6544, "recall_at_top10": 0.1904, "recall_at_top20": 0.3631, "precision_at_top20": 0.7151, "lift_at_top20": 1.8156},
+      "lightgbm": {"prevalence": 0.3939, "roc_auc": 0.7685, "pr_auc": 0.6563, "precision": 0.5728, "recall": 0.7694, "f1": 0.6567, "recall_at_top10": 0.1910, "recall_at_top20": 0.3669, "precision_at_top20": 0.7225, "lift_at_top20": 1.8345}
+    },
+    "lightgbm_minus_paired_bootstrap_95ci": {
+      "recency_frequency_ranks": {"pr_auc": [0.1009, 0.0971, 0.1046], "roc_auc": [0.0965, 0.0940, 0.0990], "recall_at_top20": [0.0675, 0.0643, 0.0706]},
+      "logistic_regression_all_features": {"pr_auc": [0.0058, 0.0041, 0.0076], "roc_auc": [0.0039, 0.0035, 0.0044], "recall_at_top20": [0.0038, 0.0023, 0.0052]}
+    }
+  }
+}

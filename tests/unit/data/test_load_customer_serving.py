@@ -298,3 +298,49 @@ def test_cli_needs_a_table():
         loader.parse_args(["--dry-run"])
     args = loader.parse_args(["--table", "branches", "--table", "fx_latest", "--profile", "cuy-loyalty"])
     assert args.table == ["branches", "fx_latest"] and not args.dry_run
+
+
+# ---- Sharding (parallel loads) ----
+
+
+def test_shards_partition_customers_exactly_and_stably():
+    spec = TABLES["transactions_recent"]
+    rows = [txn(f"CLI-{i:05d}", i) for i in range(2000)]
+    served = [{r["customer_id"] for r in rows if loader.is_served(spec, r, None, (k, 8))} for k in range(8)]
+    assert set().union(*served) == {r["customer_id"] for r in rows}  # every customer in some shard
+    assert sum(len(s) for s in served) == 2000                       # and in only one
+    assert all(150 < len(s) < 350 for s in served)                    # roughly balanced
+    assert loader.shard_of("CLI-00BPQUST6X8L", 8) == loader.shard_of("CLI-00BPQUST6X8L", 8)
+
+
+def test_shard_counts_add_up_to_the_unsharded_load():
+    spec = TABLES["transactions_recent"]
+    rows = [txn(f"CLI-{i:03d}", i) for i in range(300)]
+    whole = loader.publish(spec, [rows]).rows_served
+    assert sum(loader.publish(spec, [rows], shard=(k, 4)).rows_served for k in range(4)) == whole == 300
+
+
+def test_reference_tables_ignore_the_shard():
+    rows = [{"source_currency": "USD", "target_currency": "MXN"}]
+    assert all(loader.publish(TABLES["fx_latest"], [rows], shard=(k, 4)).rows_served == 1 for k in range(4))
+
+
+def test_shard_combines_with_a_customer_filter():
+    spec = TABLES["transactions_recent"]
+    cid = "CLI-00BPQUST6X8L"
+    k = loader.shard_of(cid, 8)
+    row = txn(cid, 1)
+    assert loader.is_served(spec, row, frozenset({cid}), (k, 8))
+    assert not loader.is_served(spec, row, frozenset({cid}), ((k + 1) % 8, 8))
+
+
+@pytest.mark.parametrize("text", ["8/8", "-1/8", "a/8", "3", "3/0"])
+def test_malformed_shards_are_refused(text):
+    with pytest.raises(Exception):
+        loader.parse_shard(text)
+    assert loader.parse_shard("0/1") == (0, 1) and loader.parse_shard("7/8") == (7, 8)
+
+
+def test_cli_accepts_a_shard():
+    args = loader.parse_args(["--table", "transactions_recent", "--shard", "2/8", "--profile", "cuy-loyalty"])
+    assert args.shard == (2, 8)
