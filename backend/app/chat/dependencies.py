@@ -4,6 +4,8 @@ from typing import Annotated, Any
 from fastapi import Depends
 from pydantic_ai.models import Model
 
+from agents.conversations import DynamoHandoffStore, DynamoSessionStore
+from agents.engines.escalation import HandoffStore, InMemoryHandoffStore
 from agents.factory import build_orchestrator
 from agents.guardrails import BedrockGuardrail, Guardrail, NoOpGuardrail
 from agents.local_model import local_model
@@ -16,6 +18,8 @@ from agents.models import (
 )
 from agents.orchestrator import Orchestrator
 from agents.routing import Router, RuleBasedRouter
+from agents.serving import dynamodb_serving_table
+from agents.sessions import InMemorySessionStore, SessionStore
 from app.config import Settings, get_settings
 from app.customers.dependencies import get_serving_repository
 
@@ -57,17 +61,36 @@ def build_guardrail(settings: Settings, bedrock_client: Any = None) -> Guardrail
     return BedrockGuardrail(client, settings.bedrock_guardrail_id, settings.bedrock_guardrail_version)
 
 
+def build_chat_stores(settings: Settings) -> tuple[SessionStore, HandoffStore]:
+    """Sessions and handoffs. DynamoDB: one conversations table for both, through its own AWS session
+    (CONVERSATIONS_AWS_PROFILE, or the default chain: the ECS task role), never the Bedrock one.
+    Building them makes no request."""
+    if settings.conversations_backend == "dynamodb":
+        # The serving helper is generic: a table with its own session and short timeouts.
+        table = dynamodb_serving_table(
+            settings.conversations_table_name, settings.conversations_aws_region, settings.conversations_aws_profile
+        )
+        sessions = DynamoSessionStore(
+            table, idle_minutes=settings.session_idle_minutes, retention_days=settings.session_retention_days
+        )
+        return sessions, DynamoHandoffStore(table, retention_days=settings.handoff_retention_days)
+    return InMemorySessionStore(), InMemoryHandoffStore()
+
+
 @lru_cache
 def get_orchestrator() -> Orchestrator:
-    """One orchestrator per process, so in-memory sessions and handoffs persist across requests."""
+    """One orchestrator per process, so in-memory sessions and handoffs (if used) persist across requests."""
     settings = get_settings()
     # One client for every Bedrock call: same credentials, region, timeouts and connection pool.
     client = bedrock_runtime_client(bedrock_config(settings)) if uses_bedrock(settings) else None
+    sessions, handoffs = build_chat_stores(settings)
     return build_orchestrator(
         serving=get_serving_repository(),  # the same repository GET /me/profile reads
         model=build_inquiry_model(settings, client),
         router=build_router(settings, client),
         guardrail=build_guardrail(settings, client),
+        sessions=sessions,
+        handoffs=handoffs,
     )
 
 

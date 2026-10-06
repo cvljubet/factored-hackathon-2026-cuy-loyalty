@@ -211,6 +211,7 @@ class TestNoSecretsStored:
             "status",
             "created_at",
             "open_question",
+            "opening_message",
             "recent_turns",
             "verified_facts",
         }

@@ -6,6 +6,9 @@ model is plugged in.
 """
 
 import logging
+import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -18,7 +21,7 @@ from agents.guardrails import GUARDRAIL_UNAVAILABLE, Guardrail
 from agents.messages import message
 from agents.routing import Engine, RouteResult, Router
 from agents.safety import redact, scan_output
-from agents.sessions import MAX_TURNS, ConversationTurn, SessionState, SessionStore, VerifiedFact, merge_facts
+from agents.sessions import MAX_TURNS, ConversationTurn, SessionStore, VerifiedFact, merge_facts
 
 logger = logging.getLogger(__name__)
 
@@ -33,8 +36,14 @@ class TurnTrace(BaseModel):
     route: RouteResult | None = None
     tools_called: tuple[str, ...] = ()
     model_requests: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    models_used: tuple[str, ...] = ()
+    fallback_used: bool = False
     blocked_reason: str | None = None
     consecutive_failures: int = Field(default=0, ge=0)
+    # Milliseconds per stage that ran: guardrail_input, router, engine, guardrail_output.
+    stage_ms: dict[str, float] = Field(default_factory=dict)
 
 
 class AgentReply(BaseModel):
@@ -88,33 +97,59 @@ class Orchestrator:
         )
 
         # The conversation so far, including this message, as a human agent would see it.
-        history = (*state.turns, ConversationTurn(role="customer", text=redact(user_message)))[-MAX_TURNS:]
+        customer_turn = ConversationTurn(role="customer", text=redact(user_message))
+        history = (*state.turns, customer_turn)[-MAX_TURNS:]
+        opening = state.opening or customer_turn
 
-        context, route, engine, result, blocked_reason = self._run(context, user_message, history, state.facts)
+        stage_ms: dict[str, float] = {}
+        context, route, engine, result, blocked_reason = self._run(
+            context, user_message, history, state.facts, opening, stage_ms
+        )
         trace_from = result
         facts = merge_facts(state.facts, result.facts)
 
         failures = context.consecutive_failures + 1 if result.failed else 0
         if result.failed and failures >= FAILURES_BEFORE_ESCALATION:
             engine = "escalation"
-            result = self.escalation.escalate(context, "repeated_failures", user_message, history, facts)
+            result = self.escalation.escalate(context, "repeated_failures", user_message, history, facts, opening)
+        handoff_state = {}
         if result.escalated:
             failures = 0
+            handoff_state = {
+                "handoff_count": state.handoff_count + 1,
+                "last_handoff_id": result.handoff_id,
+                "last_handoff_reason": result.handoff_reason,
+            }
 
-        turns = (*history, ConversationTurn(role="assistant", text=redact(result.reply)))[-MAX_TURNS:]
-        self.sessions.save(
-            customer_id,
-            session_id,
-            SessionState(consecutive_failures=failures, language=context.language, turns=turns, facts=facts),
+        assistant_turn = ConversationTurn(role="assistant", text=redact(result.reply))
+        turns = (*history, assistant_turn)[-MAX_TURNS:]
+        saved = state.model_copy(
+            update={
+                "version": state.version + 1,
+                "consecutive_failures": failures,
+                "language": context.language,
+                "turns": turns,
+                "facts": facts,
+                "opening": opening,
+                **handoff_state,
+            }
         )
+        # Raises SessionConflict if another request saved this session meanwhile (e.g. a second tab).
+        self.sessions.save(customer_id, session_id, saved, new_turns=(customer_turn, assistant_turn))
         trace = TurnTrace(
             route=route,
             tools_called=trace_from.tools_called,
             model_requests=trace_from.model_requests,
+            input_tokens=trace_from.input_tokens,
+            output_tokens=trace_from.output_tokens,
+            models_used=trace_from.models_used,
+            fallback_used=trace_from.fallback_used,
             blocked_reason=blocked_reason,
             consecutive_failures=failures,
+            stage_ms=stage_ms,
         )
-        logger.info(
+        # The structured per-turn record is written by the caller (the backend's chat route).
+        logger.debug(
             "Chat turn: engine=%s status=%s tools=%s failures=%d", engine, result.status, trace.tools_called, failures
         )
         return AgentReply(
@@ -133,9 +168,12 @@ class Orchestrator:
         user_message: str,
         history: tuple[ConversationTurn, ...],
         facts: tuple[VerifiedFact, ...],
+        opening: ConversationTurn,
+        stage_ms: dict[str, float],
     ) -> tuple[AgentContext, RouteResult | None, Engine, EngineResult, str | None]:
-        """The turn's result, with the context updated to the routed language."""
-        verdict = self.guardrail.check_input(context, user_message)
+        """The turn's result, with the context updated to the routed language; fills stage_ms."""
+        with _timed(stage_ms, "guardrail_input"):
+            verdict = self.guardrail.check_input(context, user_message)
         if not verdict.allowed:
             # An intervention (e.g. a prompt attack) is not a failure to help, so it never escalates.
             # An unreachable guardrail is: two in a row hand the customer to a human.
@@ -145,25 +183,29 @@ class Orchestrator:
             )
             return context, None, "out_of_scope", blocked, verdict.reason or "input_guardrail"
 
-        route = self.router.route(context, user_message)
+        with _timed(stage_ms, "router"):
+            route = self.router.route(context, user_message)
         context = context.model_copy(update={"language": route.language})
 
         # Escalation triggers and the sensitive-data policy never reach a model.
         if route.credit_decision or route.engine == "escalation":
             reason = "credit_decision" if route.credit_decision else "human_requested"
-            handoff = self.escalation.escalate(context, reason, user_message, history, facts)
+            with _timed(stage_ms, "engine"):
+                handoff = self.escalation.escalate(context, reason, user_message, history, facts, opening)
             return context, route, "escalation", handoff, None
         if route.sensitive_request:
             declined = EngineResult(reply=message("sensitive_request", context.language), status="declined")
             return context, route, route.engine, declined, None
 
-        if route.engine == "inquiry":
-            result = self.inquiry.handle(context, user_message)
-        elif route.engine == "recommendation":
-            result = self.recommendation.handle(context, user_message)
-        else:
-            result = EngineResult(reply=message("out_of_scope", context.language), status="out_of_scope")
-        screened, blocked_reason = self._screen_output(context, result)
+        with _timed(stage_ms, "engine"):
+            if route.engine == "inquiry":
+                result = self.inquiry.handle(context, user_message)
+            elif route.engine == "recommendation":
+                result = self.recommendation.handle(context, user_message)
+            else:
+                result = EngineResult(reply=message("out_of_scope", context.language), status="out_of_scope")
+        with _timed(stage_ms, "guardrail_output"):
+            screened, blocked_reason = self._screen_output(context, result)
         return context, route, route.engine, screened, blocked_reason
 
     def _screen_output(self, context: AgentContext, result: EngineResult) -> tuple[EngineResult, str | None]:
@@ -177,3 +219,12 @@ class Orchestrator:
             update={"reply": message("output_blocked", context.language), "status": "blocked", "failed": True}
         )
         return blocked, reason
+
+
+@contextmanager
+def _timed(stage_ms: dict[str, float], stage: str) -> Iterator[None]:
+    start = time.perf_counter()
+    try:
+        yield
+    finally:
+        stage_ms[stage] = round((time.perf_counter() - start) * 1000, 1)

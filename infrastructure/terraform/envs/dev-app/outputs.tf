@@ -21,3 +21,8 @@ output "team_assume_policy_json" {
   description = "Policy for a team-account principal (e.g. a developer role) that must assume the invoker role."
   value       = module.bedrock.team_assume_policy_json
 }
+
+output "bedrock_dashboard_url" {
+  description = "CloudWatch dashboard of Bedrock requests, throttles and guardrail interventions (model account)."
+  value       = module.bedrock.dashboard_url
+}

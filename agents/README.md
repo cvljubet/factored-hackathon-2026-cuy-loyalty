@@ -10,7 +10,7 @@ orchestration stays plain application code.
 
 ## Flow of one turn (`orchestrator.py`)
 
-1. Load session state (failure count, language) for `(customer_id, session_id)`.
+1. Load session state (failure count, language, the latest 20 messages) for `(customer_id, session_id)`.
 2. Build an `AgentContext` with the authenticated `customer_id` passed in by the backend.
 3. Input guardrail (`guardrails.py`: Bedrock `ApplyGuardrail` when configured, else no-op).
    An intervention blocks the message; an unreachable guardrail blocks it and counts as a failure.
@@ -26,6 +26,8 @@ orchestration stays plain application code.
    - out of scope: fixed reply
 7. Output screening: the 8+ digit scan (`safety.scan_output`) plus the output guardrail.
 8. A failed turn increments the failure count; the second failure in a row hands off.
+9. Save the session and this turn's two messages, only if no other request saved it since step 1
+   (`SessionConflict` otherwise; the chat route answers 409).
 
 ## Layout
 
@@ -42,7 +44,8 @@ orchestration stays plain application code.
 | `models.py` | The shared Bedrock client (profile, timeouts) and Converse models (Haiku, optional Sonnet fallback); `AGENT_LLM=bedrock` |
 | `local_model.py` | Deterministic `FunctionModel` so the app runs without model access |
 | `guardrails.py`, `safety.py` | Guardrail protocol, no-op and Bedrock (`ApplyGuardrail`); sensitive-request and output-scan rules |
-| `sessions.py`, `factory.py` | Session state store (in-memory); `build_orchestrator()` |
+| `sessions.py`, `factory.py` | Session state, its store protocol and the in-memory store; `build_orchestrator()` |
+| `conversations.py` | DynamoDB session and handoff stores over the conversations table (keys, idle timeout, TTL) |
 
 ## Security invariants
 

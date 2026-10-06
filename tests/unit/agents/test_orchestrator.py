@@ -207,6 +207,16 @@ class TestGuardrails:
 
         assert reply.status == "blocked"
         assert harness.llm.requests == []
+        assert set(reply.trace.stage_ms) == {"guardrail_input"}
+
+    def test_trace_times_each_stage_that_ran(self):
+        harness = Harness([answer("Tu saldo no está disponible.")], guardrail=RecordingGuardrail())
+
+        reply = harness.say("¿Cuál es mi saldo?")
+
+        assert set(reply.trace.stage_ms) == {"guardrail_input", "router", "engine", "guardrail_output"}
+        assert all(ms >= 0 for ms in reply.trace.stage_ms.values())
+        assert reply.trace.models_used == ("scripted",)
 
     def test_blocked_output_is_replaced(self):
         harness = Harness([answer("algo")], guardrail=RecordingGuardrail(block_output=True))
