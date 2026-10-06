@@ -15,3 +15,7 @@ output "team_assume_policy_json" {
   description = "Policy document for the team-account principal that calls Bedrock."
   value       = data.aws_iam_policy_document.team_assume_invoker.json
 }
+
+output "dashboard_url" {
+  value = "https://${data.aws_region.current.region}.console.aws.amazon.com/cloudwatch/home?region=${data.aws_region.current.region}#dashboards/dashboard/${aws_cloudwatch_dashboard.bedrock.dashboard_name}"
+}

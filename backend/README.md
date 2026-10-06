@@ -33,6 +33,12 @@ Copy `.env.example` (repo root) to `.env` and fill in the Cognito values from
 | `SERVING_BACKEND` | Optional: `memory` (default; synthetic profiles only, no other data) or `dynamodb` (the customer-serving table) for the agent's tools |
 | `SERVING_TABLE_NAME` | Optional, default `cuy-loyalty-dev-customer-serving` |
 | `SERVING_AWS_REGION` | Optional, default `us-east-2` |
+| `CONVERSATIONS_BACKEND` | Optional: `memory` (default; lost on restart) or `dynamodb` (the conversations table) for chat sessions, turns and handoffs |
+| `CONVERSATIONS_TABLE_NAME` | Optional, default `cuy-loyalty-dev-conversations` |
+| `CONVERSATIONS_AWS_REGION` | Optional, default `us-east-2` |
+| `CONVERSATIONS_AWS_PROFILE` | Optional AWS profile used **only** for the conversations table; same rules as `SERVING_AWS_PROFILE` |
+| `SESSION_IDLE_MINUTES` | Optional, default `10`: a longer pause starts a new conversation (DynamoDB only) |
+| `SESSION_RETENTION_DAYS`, `HANDOFF_RETENTION_DAYS` | Optional, defaults `7` and `30`: TTL of sessions and turns after their last write, and of handoffs after creation |
 | `SERVING_AWS_PROFILE` | Optional AWS profile used **only** for the serving table (locally the team account's, e.g. `cuy-loyalty`); unset uses the default chain (the ECS task role). Independent of `BEDROCK_PROFILE` |
 | `AGENT_LLM` | Optional: `local` (default, deterministic stand-in, no AWS) or `bedrock` (Converse via Pydantic AI) |
 | `AGENT_ROUTER` | Optional: `rules` (default) or `bedrock` (Haiku structured output OR-ed with the deterministic checks) |
@@ -70,6 +76,17 @@ Live check, a few Bedrock requests (unit tests never call AWS):
 BEDROCK_PROFILE=<profile> BEDROCK_GUARDRAIL_ID=<id> BEDROCK_GUARDRAIL_VERSION=<n> \
   uv run python scripts/bedrock_smoke.py
 ```
+
+### Logging and observability
+
+`LOG_LEVEL` (default `INFO`) sets the level of the application's loggers; uvicorn keeps its own.
+Every chat turn writes one JSON line (`"event": "chat_turn"`, see `app/observability.py`) with the
+engine, status, route, tools, model requests, tokens, the models that answered, whether a fallback
+model took over, and the latency per stage. It never holds the message, the reply or the customer_id
+(the session is hashed). In ECS these lines feed the CloudWatch metric filters and the dashboard in
+`infrastructure/terraform/envs/dev/observability.tf` (output `chat_dashboard_url`); Bedrock's own
+metrics (throttles against the quota, guardrail interventions) are on the model account's dashboard
+(`envs/dev-app` output `bedrock_dashboard_url`).
 
 ## Customer data
 
@@ -119,8 +136,8 @@ docker run --rm -p 8000:8000 \
 ```
 
 The image installs only runtime dependencies from `uv.lock`, runs as a non-root
-user on port 8000 with a single Uvicorn worker (sessions and handoffs are in
-memory), and holds no configuration or credentials. `GET /health` is the
+user on port 8000 with a single Uvicorn worker (with `CONVERSATIONS_BACKEND=memory`,
+sessions and handoffs are in process memory), and holds no configuration or credentials. `GET /health` is the
 unauthenticated health check. The container exits at startup if the Cognito
 variables are missing.
 

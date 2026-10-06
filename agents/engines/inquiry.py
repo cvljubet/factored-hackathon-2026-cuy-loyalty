@@ -3,6 +3,7 @@ import logging
 from pydantic_ai import UsageLimits, capture_run_messages
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, ToolCallPart, ToolReturnPart
 from pydantic_ai.models import Model
+from pydantic_ai.models.fallback import FallbackModel
 
 from agents.context import AgentContext
 from agents.deps import AgentDeps
@@ -56,7 +57,12 @@ class InquiryEngine:
                 reply = ""
 
         tools_called, model_requests = _trace(messages)
-        trace = {"tools_called": tools_called, "model_requests": model_requests, "facts": _verified_facts(messages)}
+        trace = {
+            "tools_called": tools_called,
+            "model_requests": model_requests,
+            "facts": _verified_facts(messages),
+            **_usage(messages, _fallback_model_names(self.model)),
+        }
         if not reply:
             return EngineResult(reply=message("inquiry_failed", context.language), status="failed", failed=True, **trace)
         return EngineResult(reply=reply, status="answered", **trace)
@@ -66,6 +72,25 @@ def _trace(messages: list[ModelMessage]) -> tuple[tuple[str, ...], int]:
     responses = [m for m in messages if isinstance(m, ModelResponse)]
     calls = tuple(part.tool_name for m in responses for part in m.parts if isinstance(part, ToolCallPart))
     return calls, len(responses)
+
+
+def _usage(messages: list[ModelMessage], fallback_names: set[str]) -> dict:
+    """Tokens and the models that answered this turn, from the responses the run received."""
+    responses = [m for m in messages if isinstance(m, ModelResponse)]
+    models_used = tuple(dict.fromkeys(m.model_name for m in responses if m.model_name))
+    return {
+        "input_tokens": sum(m.usage.input_tokens for m in responses),
+        "output_tokens": sum(m.usage.output_tokens for m in responses),
+        "models_used": models_used,
+        "fallback_used": any(name in fallback_names for name in models_used),
+    }
+
+
+def _fallback_model_names(model: Model) -> set[str]:
+    """Every model after the first in a FallbackModel; none for a single model."""
+    if isinstance(model, FallbackModel):
+        return {fallback.model_name for fallback in model.models[1:]}
+    return set()
 
 
 def _verified_facts(messages: list[ModelMessage]) -> tuple[VerifiedFact, ...]:

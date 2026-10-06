@@ -17,13 +17,11 @@ from agents.context import AgentContext, Language
 from agents.engines.base import EngineResult
 from agents.messages import message
 from agents.safety import redact
-from agents.sessions import ConversationTurn, VerifiedFact
-
-EscalationReason = Literal["human_requested", "repeated_failures", "credit_decision"]
+from agents.sessions import ConversationTurn, EscalationReason, VerifiedFact
 
 
 class Handoff(BaseModel):
-    """What a human agent receives. A persistent store saves model_dump(mode="json") as one item.
+    """What a human agent receives. A persistent store saves it as one item (its JSON).
 
     Holds only customer-visible conversation text (redacted) and tool data the
     assistant already showed or could show; never tokens or backend-only fields.
@@ -40,6 +38,8 @@ class Handoff(BaseModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     # The message that triggered the handoff: what the customer still needs answered.
     open_question: str
+    # How the conversation started, even when it is no longer among the recent turns.
+    opening_message: ConversationTurn | None = None
     recent_turns: tuple[ConversationTurn, ...] = ()
     verified_facts: tuple[VerifiedFact, ...] = ()
 
@@ -76,6 +76,7 @@ class EscalationEngine:
         open_question: str,
         recent_turns: tuple[ConversationTurn, ...] = (),
         verified_facts: tuple[VerifiedFact, ...] = (),
+        opening: ConversationTurn | None = None,
     ) -> EngineResult:
         handoff = Handoff(
             id=f"HO-{uuid.uuid4().hex[:10].upper()}",
@@ -84,10 +85,14 @@ class EscalationEngine:
             reason=reason,
             language=context.language,
             open_question=redact(open_question),
+            opening_message=opening,
             recent_turns=recent_turns,
             verified_facts=verified_facts,
         )
         self.store.create(handoff)
         return EngineResult(
-            reply=message("handoff_acknowledgement", context.language), status="escalated", handoff_id=handoff.id
+            reply=message("handoff_acknowledgement", context.language),
+            status="escalated",
+            handoff_id=handoff.id,
+            handoff_reason=reason,
         )
