@@ -177,6 +177,13 @@ class TestNoSecretsStored:
             (f"Quiero hablar con un asesor {JWT}", JWT),
             ("Quiero hablar con un asesor sobre la tarjeta 4111 1111 1111 1111", "4111 1111 1111 1111"),
             ("Quiero hablar con un asesor, mi PIN 4321", "4321"),
+            ("Quiero hablar con un asesor, la clave de mi tarjeta es 4321", "4321"),
+            ("Quiero hablar con un asesor, mi contraseña es: Secreta123", "Secreta123"),
+            ("Quero falar com um atendente, minha senha do app é abc123", "abc123"),
+            ("Quiero hablar con un asesor, mi clave dinámica es 654321", "654321"),
+            ("Quiero hablar con un asesor, el código que me llegó por SMS es 482913", "482913"),
+            ("Quiero hablar con un asesor, el código de seguridad de mi tarjeta es 123", "es 123"),
+            ("Quiero hablar con un asesor, mi tarjeta es 4111  1111  1111  1111", "4111  1111  1111  1111"),
         ],
     )
     def test_credentials_tokens_and_full_numbers_are_redacted(self, text, secret):
@@ -225,6 +232,19 @@ class TestNoSecretsStored:
         ("tarjeta 4111111111111111", f"tarjeta {REDACTED}"),
         ("saldo S/ 1.234.567,89 el 2026-10-04", "saldo S/ 1.234.567,89 el 2026-10-04"),
         ("Hola, ¿cuál es mi saldo?", "Hola, ¿cuál es mi saldo?"),
+        # The value, not the word after the keyword.
+        ("la clave de mi tarjeta es 4321", f"la clave de mi tarjeta es {REDACTED}"),
+        ("mi contraseña es: Secreta123", f"mi contraseña es: {REDACTED}"),
+        ("contraseña:Secreta123", f"contraseña:{REDACTED}"),
+        ("minha senha do app é abc123", f"minha senha do app é {REDACTED}"),
+        ("mi clave dinámica 654321", f"mi clave dinámica {REDACTED}"),
+        ("mi contraseña es Secreta 123", f"mi contraseña es {REDACTED} {REDACTED}"),
+        # Sentence punctuation after the value ends the clause and is kept.
+        ("mi clave es Hunter2! quiero un asesor", f"mi clave es {REDACTED}! quiero un asesor"),
+        # Only the keyword's clause.
+        ("mi PIN es 4321, quiero hablar con un asesor", f"mi PIN es {REDACTED}, quiero hablar con un asesor"),
+        ("¿Cuál es mi clave?", "¿Cuál es mi clave?"),
+        ("tarjeta 4111  1111\n1111  1111", f"tarjeta {REDACTED}"),
     ],
 )
 def test_redact(text, expected):
