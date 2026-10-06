@@ -1,8 +1,9 @@
 """A snapshot of every lever the evaluated behaviour depends on, stored in each report's header.
 
 evals/compare.py diffs two snapshots, so a change in scores can be read next to what changed:
-router model and inference settings, the router prompt and output schema, the keyword rules,
-the output scan, the published guardrail's definition, and the datasets themselves.
+router and inquiry models and inference settings, the router prompt and output schema, the
+inquiry prompt and tool definitions, the keyword rules, the output scan, the published
+guardrail's definition, and the datasets themselves (the inquiry suite's fixed data included).
 
 Nothing here calls a model. The guardrail definition comes from GetGuardrail (control plane),
 which the invoker role may not call: EVAL_GUARDRAIL_PROFILE names a profile that may
@@ -33,6 +34,9 @@ def bedrock_config_from_env():
     return BedrockConfig(
         region=os.environ.get("BEDROCK_REGION", "us-east-2"),
         router_model_id=os.environ.get("BEDROCK_ROUTER_MODEL_ID", HAIKU_4_5),
+        inquiry_model_id=os.environ.get("BEDROCK_INQUIRY_MODEL_ID", HAIKU_4_5),
+        # Empty means none, as in the backend's settings (env_ignore_empty).
+        inquiry_fallback_model_id=os.environ.get("BEDROCK_INQUIRY_FALLBACK_MODEL_ID") or None,
         profile=os.environ.get("BEDROCK_PROFILE"),
         # Latency does not matter here; riding out throttling does.
         max_attempts=int(os.environ.get("EVAL_MAX_ATTEMPTS", "4")),
@@ -42,6 +46,7 @@ def bedrock_config_from_env():
 def snapshot(live: bool) -> dict[str, Any]:
     config = {
         "router": _router(),
+        "inquiry": _inquiry(),
         "rules": _rules(),
         "datasets": _datasets(),
     }
@@ -63,6 +68,40 @@ def _router() -> dict[str, Any]:
         # Field descriptions reach the model as the output tool's schema.
         "output_fields": {name: field.get("description", "") for name, field in fields.items()},
         "output_retries": getattr(router_agent, "_max_output_retries", None),
+    }
+
+
+def _inquiry() -> dict[str, Any]:
+    """What the inquiry model is offered, as Pydantic AI sends it: instructions and tool definitions."""
+    from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
+    from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+    from agents.context import AgentContext
+    from agents.deps import AgentDeps
+    from agents.engines.inquiry import MAX_ROUNDS
+    from agents.engines.recommendation import NotReadyRecommendationProvider
+    from agents.inquiry_agent import inquiry_agent
+    from agents.serving import InMemoryServingRepository
+
+    offered: list[AgentInfo] = []
+
+    def capture(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        offered.append(info)
+        return ModelResponse(parts=[TextPart("ok")])
+
+    # The instructions depend only on the customer's language; "es" stands for both.
+    context = AgentContext(customer_id="SNAPSHOT", session_id="snapshot", language="es")
+    deps = AgentDeps(context, InMemoryServingRepository(), NotReadyRecommendationProvider())
+    inquiry_agent.run_sync("snapshot", deps=deps, model=FunctionModel(capture))
+    info = offered[0]
+    return {
+        "instructions": info.instructions,
+        "tools": {
+            tool.name: {"description": tool.description, "parameters": tool.parameters_json_schema}
+            for tool in info.function_tools
+        },
+        "max_rounds": MAX_ROUNDS,
+        "tool_retries": getattr(inquiry_agent, "_max_tool_retries", None),
     }
 
 
@@ -92,11 +131,14 @@ def _pattern_text(value: Any) -> Any:
 
 
 def _datasets() -> dict[str, Any]:
+    """Case files (.jsonl) and fixed data (.json, e.g. what the inquiry tools serve)."""
     out = {}
-    for path in sorted(Path(DATASETS).glob("*.jsonl")):
+    for path in sorted(Path(DATASETS).glob("*.json*")):
         data = path.read_bytes()
-        cases = sum(1 for line in data.splitlines() if line.strip())
-        out[path.name] = {"sha256": hashlib.sha256(data).hexdigest()[:12], "cases": cases}
+        entry: dict[str, Any] = {"sha256": hashlib.sha256(data).hexdigest()[:12]}
+        if path.suffix == ".jsonl":
+            entry["cases"] = sum(1 for line in data.splitlines() if line.strip())
+        out[path.name] = entry
     return out
 
 
@@ -104,19 +146,21 @@ def _inference() -> dict[str, Any]:
     import boto3
 
     from agents.models import bedrock_model
+    from eval_kit import PRICES_PER_MTOK
 
     config = bedrock_config_from_env()
     # A client with dummy credentials: building the model makes no request, it only exposes its settings.
     client = boto3.Session(aws_access_key_id="x", aws_secret_access_key="x", region_name=config.region).client(
         "bedrock-runtime"
     )
+    # The router and inquiry models get the same settings (agents.models.bedrock_model).
     settings = bedrock_model(config.router_model_id, config, client).settings or {}
-    # The inquiry model is canned in these suites, so only the router's settings are levers here.
-    skipped = {"profile", "inquiry_model_id", "inquiry_fallback_model_id"}
-    values = {key: value for key, value in asdict(config).items() if key not in skipped}
+    values = {key: value for key, value in asdict(config).items() if key != "profile"}
     values.update(
         model_settings=dict(settings),
         eval_model_rpm=float(os.environ.get("EVAL_MODEL_RPM", "9")),
+        # What turns tokens into the reports' cost estimates (eval_kit.cost_usd).
+        prices_per_mtok={family: list(prices) for family, prices in PRICES_PER_MTOK.items()},
     )
     return values
 

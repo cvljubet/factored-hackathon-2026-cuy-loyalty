@@ -53,8 +53,7 @@ def turn_record(reply: AgentReply, latency_ms: float) -> dict[str, Any]:
         "engine": reply.engine,
         "status": reply.status,
         "language": reply.language,
-        # consecutive_failures is reset by a success or a handoff, so above zero means this turn failed.
-        "failed": trace.consecutive_failures > 0,
+        "failed": trace.failed,
         "consecutive_failures": trace.consecutive_failures,
         "escalated": reply.escalated,
         "handoff_id": reply.handoff_id,

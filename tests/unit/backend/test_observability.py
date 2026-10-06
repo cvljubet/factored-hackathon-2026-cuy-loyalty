@@ -65,7 +65,12 @@ def test_turn_record_describes_the_turn_without_its_text():
 
 
 def test_a_turn_that_failed_is_flagged():
-    assert turn_record(reply(consecutive_failures=1), 10)["failed"] is True
+    assert turn_record(reply(failed=True, consecutive_failures=1), 10)["failed"] is True
+
+
+def test_an_intervention_after_a_failure_is_not_flagged():
+    # The count carries over a guardrail intervention, so it no longer says whether this turn failed.
+    assert turn_record(reply(consecutive_failures=1), 10)["failed"] is False
 
 
 def test_log_turn_writes_one_json_object(captured_turns):

@@ -46,10 +46,10 @@ class OutputScanResult:
     reason: str | None = None
 
 
-def _possible_full_numbers(text: str) -> list[re.Match[str]]:
+def _possible_full_numbers(text: str, digit_run: re.Pattern[str] = _DIGIT_RUN) -> list[re.Match[str]]:
     return [
         match
-        for match in _DIGIT_RUN.finditer(text)
+        for match in digit_run.finditer(text)
         if not _ISO_DATE.fullmatch(match.group())
         and not _CURRENCY_BEFORE.search(text[max(0, match.start() - 5) : match.start()])
     ]
@@ -63,20 +63,70 @@ def scan_output(text: str) -> OutputScanResult:
 
 
 REDACTED = "[REDACTED]"
-# A credential keyword followed by its value: "mi contraseña es X", "senha: X", "PIN 1234".
-_CREDENTIAL = re.compile(
-    r"(?i)\b(contrase[ñn]a|password|senha|clave|pin|cvv|cvc|token|otp)\b(\s*(?:es|é|is|:|=)?\s*)\S+"
+# Words that name a secret. "código" covers "código de seguridad", "el código que me llegó por SMS".
+_CREDENTIAL_KEYWORD = re.compile(
+    r"(?i)\b(contrase[ñn]a|password|passcode|senha|clave|chave|pin|nip|cvv2?|cvc|token|otp|c[óo]digo)\b"
 )
+# The clause a keyword's value must be in: up to a comma, semicolon or sentence end, or a line break.
+_CLAUSE_END = re.compile(r"[,;.!?](?=\s|$)|\n")
+# What introduces the value: "es", "é", "is", "son", ":" or "=" ("la clave de mi tarjeta es 4321").
+_VALUE_SEPARATOR = re.compile(r"(?i)(?<!\w)(?:es|é|is|son|era)(?!\w)|[:=]")
+_TOKEN = re.compile(r"\S+")
+# Full numbers in stored text: like _DIGIT_RUN, but also across line breaks or a few spaces
+# ("4111  1111  1111  1111"). Stored text may be over-redacted; replies are scanned with _DIGIT_RUN.
+_STORED_DIGIT_RUN = re.compile(r"\d(?:(?:\s{1,3}|[.-])?\d){7,}")
 # JWTs (e.g. a pasted Cognito token) and "Bearer <token>".
 _JWT = re.compile(r"\beyJ[\w-]+\.[\w-]+\.[\w-]*")
 _BEARER = re.compile(r"(?i)\bbearer\s+\S+")
+
+
+def _credential_spans(text: str) -> list[tuple[int, int]]:
+    """Where the values after credential keywords are, within each keyword's clause.
+
+    The first word after a separator is the value ("contraseña es: Secreta123"); any word with a
+    digit in the clause is one too ("mi PIN 4321", "clave dinámica 654321"). With neither, the word
+    right after the keyword is taken, so a bare "senha abc" is still covered.
+    """
+    spans = []
+    for keyword in _CREDENTIAL_KEYWORD.finditer(text):
+        end = _CLAUSE_END.search(text, keyword.end())
+        clause_end = end.start() if end else len(text)
+        tokens = [_value_part(text, t.start(), t.end()) for t in _TOKEN.finditer(text, keyword.end(), clause_end)]
+        # A token that is only a separator ("es", "es:", ":") is never a value.
+        values = [(s, e) for s, e in tokens if s < e and not _VALUE_SEPARATOR.fullmatch(text[s:e])]
+        separator = _VALUE_SEPARATOR.search(text, keyword.end(), clause_end)
+        found = {(s, e) for s, e in values if any(c.isdigit() for c in text[s:e])}
+        if separator:
+            # The first value that ends after the separator; "senha=abc" is one token, "abc" its value.
+            found.update([(max(s, separator.end()), e) for s, e in values if e > separator.end()][:1])
+        elif not found and values:
+            found.add(values[0])
+        spans.extend(found)
+    return sorted(spans)
+
+
+def _value_part(text: str, start: int, end: int) -> tuple[int, int]:
+    """A token without a leading separator: "es:Secreta" -> "Secreta", ":abc" -> "abc", ":" -> empty."""
+    match = re.match(r"(?i)(?:(?:es|é|is|son|era)?[:=]+)", text[start:end])
+    return (start + match.end(), end) if match else (start, end)
+
+
+def _replace(text: str, spans: list[tuple[int, int]]) -> str:
+    merged: list[list[int]] = []
+    for start, end in sorted(spans):
+        if merged and start <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], end)
+        else:
+            merged.append([start, end])
+    for start, end in reversed(merged):
+        text = text[:start] + REDACTED + text[end:]
+    return text
 
 
 def redact(text: str) -> str:
     """Text safe to store for a human agent: credentials, tokens and full numbers removed."""
     text = _JWT.sub(REDACTED, text)
     text = _BEARER.sub(f"Bearer {REDACTED}", text)
-    text = _CREDENTIAL.sub(lambda match: f"{match.group(1)}{match.group(2)}{REDACTED}", text)
-    for match in reversed(_possible_full_numbers(text)):
-        text = text[: match.start()] + REDACTED + text[match.end() :]
-    return text
+    text = _replace(text, _credential_spans(text))
+    numbers = _possible_full_numbers(text, _STORED_DIGIT_RUN)
+    return _replace(text, [(match.start(), match.end()) for match in numbers])

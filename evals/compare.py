@@ -4,11 +4,13 @@
     uv run python evals/compare.py baseline guardrail-v2          # names under evals/reports/
     uv run python evals/compare.py baseline guardrail-v2 --fail-on-regression
 
-Prints what each run evaluated, what changed in its levers (router model and settings,
-router prompt and output schema, keyword rules, output scan, guardrail definition, datasets;
-see tests/evaluation/eval_config.py), the pass rate per suite and per tag in both runs, then
-every case whose outcome changed. Cases where the model call failed ("model_error") are
-counted apart: they say nothing about the model, so a rise in errors is not a regression.
+Prints what each run evaluated, what changed in its levers (router and inquiry models and
+settings, router prompt and output schema, inquiry prompt and tools, keyword rules, output scan,
+guardrail definition, datasets; see tests/evaluation/eval_config.py), the pass rate per suite and
+per tag in both runs, the cost and latency of suites that measure them (requests, tokens,
+estimated cost, latency, fallback use), then every case whose outcome changed. Cases where a
+model or guardrail call failed ("model_error", "guardrail_error") are counted apart: they say
+nothing about the system under test, so a rise in errors is not a regression.
 
     uv run python evals/compare.py baseline guardrail-v2 --config-only   # just the lever diff
 """
@@ -16,13 +18,17 @@ counted apart: they say nothing about the model, so a rise in errors is not a re
 import argparse
 import difflib
 import json
+import math
 import sys
 from collections import defaultdict
+from collections.abc import Callable
+from statistics import mean, median
 from pathlib import Path
 from typing import Any
 
 REPORTS_DIR = Path(__file__).resolve().parent / "reports"
-ERROR = "model_error"
+# Outcomes where the measurement itself failed (e.g. Bedrock throttling after every retry).
+ERRORS = frozenset({"model_error", "guardrail_error"})
 # Tags whose pass rate is shown per suite; safety must stay at 100%.
 WATCHED_TAGS = ("safety", "false-block-trap", "false-sensitive-trap", "paraphrase")
 
@@ -114,17 +120,19 @@ def describe(label: str, path: Path, run: dict[str, Any]) -> str:
         return f"{label}: {path} (no run header)"
     dirty = "+uncommitted" if run.get("git_dirty") else ""
     guardrail = f"{run.get('guardrail_id')} v{run.get('guardrail_version')}" if run.get("guardrail_id") else "none"
+    fallback = run.get("inquiry_fallback_model_id")
     return (
         f"{label}: {path}\n"
         f"   {run.get('created_at')}  commit {run.get('git_commit')}{dirty}  live={run.get('live')}\n"
         f"   guardrail {guardrail}  router {run.get('router_model_id') or 'default'}"
+        f"  inquiry {run.get('inquiry_model_id') or 'default'}" + (f" (fallback {fallback})" if fallback else "")
     )
 
 
 def score(rows: list[dict[str, Any]]) -> str:
     if not rows:
         return "-"
-    errors = sum(row["actual"] == ERROR for row in rows)
+    errors = sum(row["actual"] in ERRORS for row in rows)
     scored = len(rows) - errors
     passed = sum(row["passed"] for row in rows)
     rate = f"{passed / scored:.0%}" if scored else "n/a"
@@ -164,20 +172,75 @@ def changes(a: dict[Key, dict[str, Any]], b: dict[Key, dict[str, Any]]) -> dict[
             out["only in A" if new is None else "only in B"].append(f"{suite}  {case_id}")
             continue
         line = f"{suite}  {case_id}: expected {new['expected']}, {old['actual']} -> {new['actual']}"
-        if ERROR in (old["actual"], new["actual"]):
+        if ERRORS & {old["actual"], new["actual"]}:
             if old["actual"] != new["actual"]:
-                out["model errors appeared or cleared"].append(line)
+                out["model or guardrail errors appeared or cleared"].append(line)
         elif old["passed"] and not new["passed"]:
             out["REGRESSIONS (pass -> fail)"].append(line)
         elif not old["passed"] and new["passed"]:
             out["fixes (fail -> pass)"].append(line)
         elif old["actual"] != new["actual"]:
-            out["still failing, different answer"].append(line)
+            # A check can pass with different answers (e.g. a request budget of 3 met with 2, then 3).
+            out["still passing, different answer" if new["passed"] else "still failing, different answer"].append(line)
         elif old.get("detail", {}).get("policies") != new.get("detail", {}).get("policies"):
             # Same verdict, but a different guardrail policy intervened.
             policies = f"{old['detail'].get('policies')} -> {new['detail'].get('policies')}"
             out["same verdict, different guardrail policy"].append(f"{suite}  {case_id}: {policies}")
     return out
+
+
+def measured(results: dict[Key, dict[str, Any]], suite: str) -> dict[str, dict[str, Any]]:
+    """case_id -> the metrics of the suite's cases that were measured (not errors)."""
+    return {
+        case_id: row["detail"]["metrics"]
+        for (row_suite, case_id), row in results.items()
+        if row_suite == suite and row["actual"] not in ERRORS and "metrics" in row.get("detail", {})
+    }
+
+
+def _percentile(values: list[float], share: float) -> float:
+    ordered = sorted(values)
+    return ordered[max(0, math.ceil(share * len(ordered)) - 1)]
+
+
+def _total_cost(rows: list[dict[str, Any]]) -> float | None:
+    costs = [row.get("cost_usd") for row in rows]
+    return None if None in costs else sum(costs)
+
+
+# (label, value over a run's measured cases, format); a value of None prints as n/a.
+METRICS: list[tuple[str, Callable[[list[dict[str, Any]]], float | None], str]] = [
+    ("requests / case", lambda rows: mean(r["requests"] for r in rows), "{:.2f}"),
+    ("input tokens / case", lambda rows: mean(r["input_tokens"] for r in rows), "{:.0f}"),
+    ("output tokens / case", lambda rows: mean(r["output_tokens"] for r in rows), "{:.0f}"),
+    ("est. cost USD (total)", _total_cost, "{:.4f}"),
+    ("latency p50 ms", lambda rows: median(r["latency_ms"] for r in rows), "{:.0f}"),
+    ("latency p95 ms", lambda rows: _percentile([r["latency_ms"] for r in rows], 0.95), "{:.0f}"),
+    ("fallback answered", lambda rows: sum(bool(r.get("fallback_used")) for r in rows), "{:.0f}"),
+    ("throttling retries", lambda rows: sum(r.get("retries", 0) for r in rows), "{:.0f}"),
+]
+
+
+def cost_and_latency(a: dict[Key, dict[str, Any]], b: dict[Key, dict[str, Any]]) -> list[str]:
+    """Per suite whose rows carry metrics: requests, tokens, cost, latency and fallback use in both
+    runs, over the cases both runs measured, so added, removed or errored cases do not move them."""
+    rows = [(suite, row) for results in (a, b) for (suite, _), row in results.items()]
+    suites = sorted({suite for suite, row in rows if "metrics" in row.get("detail", {})})
+    lines: list[str] = []
+    for suite in suites:
+        rows_a, rows_b = measured(a, suite), measured(b, suite)
+        shared = sorted(rows_a.keys() & rows_b.keys())
+        if not shared:
+            lines.append(f"{suite}: no case measured in both runs")
+            continue
+        lines.append(f"{suite} ({len(shared)} case{'s' * (len(shared) != 1)} measured in both runs)")
+        for label, compute, fmt in METRICS:
+            old, new = compute([rows_a[c] for c in shared]), compute([rows_b[c] for c in shared])
+            text_old = "n/a" if old is None else fmt.format(old)
+            text_new = "n/a" if new is None else fmt.format(new)
+            change = f"  ({(new - old) / old:+.0%})" if old and new is not None and new != old else ""
+            lines.append(f"  {label:<22} {text_old:>10} -> {text_new:<10}{change}".rstrip())
+    return lines
 
 
 def main() -> int:
@@ -202,6 +265,10 @@ def main() -> int:
         return 0
     print()
     print("\n".join(summary(a, b)))
+    metrics = cost_and_latency(a, b)
+    if metrics:
+        print("\nCost and latency (A -> B):")
+        print("\n".join(f"  {line}" for line in metrics))
     found = changes(a, b)
     for title in sorted(found, key=lambda t: (not t.startswith("REGRESSIONS"), t)):
         print(f"\n{title}:")

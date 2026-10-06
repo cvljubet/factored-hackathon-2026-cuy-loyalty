@@ -1,0 +1,473 @@
+{
+  "about": "Fixed synthetic serving data for the inquiry evaluation (no real customer). Items are shaped like the customer-serving table's (data/pipelines/serving/load_customer_serving.py), without PK/SK, and are served by InMemoryServingRepository. Changing a value can change what a case expects.",
+  "profiles": {
+    "CLI-EVAL-ANA": {
+      "first_name": "Ana",
+      "last_name": "Quispe",
+      "city": "Cusco",
+      "state": "Cusco",
+      "country": "Perú",
+      "customer_status": "Active",
+      "registration_date": "2019-03-14",
+      "accepts_marketing": true,
+      "as_of_date": "2026-06-17",
+      "txn_count_90d": 42,
+      "txn_amount_usd_90d": 1875.4,
+      "foreign_txn_count_90d": 3,
+      "spend_usd_entertainment": 155.0,
+      "spend_usd_food": 612.3,
+      "spend_usd_health": 96.5,
+      "spend_usd_other": 352.5,
+      "spend_usd_services": 410.2,
+      "spend_usd_transport": 248.9,
+      "agent_name": "Carla Mendoza",
+      "agent_specialty": "Tarjetas de crédito",
+      "agent_languages": "Español, Inglés",
+      "products": [
+        {
+          "product_type": "Cuenta Ahorro",
+          "product_number_masked": "****4821",
+          "currency": "USD",
+          "current_balance": 3250.75,
+          "interest_rate": 2.5,
+          "opening_date": "2019-03-14",
+          "product_status": "Active",
+          "opening_channel": "Branch",
+          "has_linked_app": true,
+          "last_transaction_date": "2026-06-05T11:20:00Z",
+          "bk_is_overdue": false
+        },
+        {
+          "product_type": "Tarjeta Crédito",
+          "product_number_masked": "****7305",
+          "currency": "USD",
+          "current_balance": 845.2,
+          "credit_limit": 5000.0,
+          "interest_rate": 38.5,
+          "opening_date": "2021-08-02",
+          "expires": "08/2027",
+          "product_status": "Active",
+          "opening_channel": "App",
+          "has_linked_app": true,
+          "last_transaction_date": "2026-06-16T13:05:22Z",
+          "bk_is_overdue": false
+        },
+        {
+          "product_type": "Tarjeta Débito",
+          "product_number_masked": "****9912",
+          "currency": "USD",
+          "current_balance": 0.0,
+          "opening_date": "2019-03-14",
+          "expires": "03/2027",
+          "product_status": "Blocked",
+          "opening_channel": "Branch",
+          "has_linked_app": true,
+          "last_transaction_date": "2026-05-19T10:11:00Z",
+          "bk_is_overdue": false
+        }
+      ]
+    },
+    "CLI-EVAL-BRUNO": {
+      "first_name": "Bruno",
+      "last_name": "Almeida",
+      "city": "Recife",
+      "state": "Pernambuco",
+      "country": "Brasil",
+      "customer_status": "Active",
+      "registration_date": "2020-09-01",
+      "accepts_marketing": true,
+      "as_of_date": "2026-06-17",
+      "txn_count_90d": 31,
+      "txn_amount_usd_90d": 2264.8,
+      "foreign_txn_count_90d": 2,
+      "spend_usd_entertainment": 210.0,
+      "spend_usd_food": 540.6,
+      "spend_usd_health": 64.95,
+      "spend_usd_other": 370.0,
+      "spend_usd_services": 702.0,
+      "spend_usd_transport": 377.25,
+      "agent_name": "Rafael Souza",
+      "agent_specialty": "Inversiones",
+      "agent_languages": "Portugués, Español",
+      "products": [
+        {
+          "product_type": "Cuenta Corriente",
+          "product_number_masked": "****5530",
+          "currency": "USD",
+          "current_balance": 2310.4,
+          "opening_date": "2020-09-01",
+          "product_status": "Active",
+          "opening_channel": "Web",
+          "has_linked_app": true,
+          "last_transaction_date": "2026-06-15T18:20:00Z",
+          "bk_is_overdue": false
+        },
+        {
+          "product_type": "Tarjeta Crédito",
+          "product_number_masked": "****6618",
+          "currency": "USD",
+          "current_balance": 1520.0,
+          "credit_limit": 8000.0,
+          "interest_rate": 42.0,
+          "opening_date": "2022-02-10",
+          "expires": "02/2028",
+          "product_status": "Active",
+          "opening_channel": "App",
+          "has_linked_app": true,
+          "last_transaction_date": "2026-06-11T22:05:00Z",
+          "bk_is_overdue": false
+        }
+      ]
+    },
+    "CLI-EVAL-LUCIA": {
+      "first_name": "Lucía",
+      "last_name": "Fernández",
+      "city": "Medellín",
+      "state": "Antioquia",
+      "country": "Colombia",
+      "customer_status": "Active",
+      "registration_date": "2026-05-30",
+      "accepts_marketing": false,
+      "products": []
+    }
+  },
+  "events": {
+    "transactions": {
+      "CLI-EVAL-ANA": [
+        {
+          "transaction_date": "2026-06-16T13:05:22Z",
+          "transaction_type": "Compra",
+          "transaction_category": "food",
+          "amount": 86.4,
+          "currency": "USD",
+          "amount_usd": 86.4,
+          "channel": "POS",
+          "merchant_name": "Supermercado Inti",
+          "merchant_category": "Supermercados",
+          "transaction_country": "Perú",
+          "transaction_city": "Cusco",
+          "transaction_status": "Approved",
+          "product_number_masked": "****7305",
+          "bk_response_code": "00"
+        },
+        {
+          "transaction_date": "2026-06-15T19:42:10Z",
+          "transaction_type": "Compra",
+          "transaction_category": "transport",
+          "amount": 12.5,
+          "currency": "USD",
+          "amount_usd": 12.5,
+          "channel": "App",
+          "merchant_name": "Taxi Qosqo",
+          "merchant_category": "Transporte",
+          "transaction_country": "Perú",
+          "transaction_city": "Cusco",
+          "transaction_status": "Approved",
+          "product_number_masked": "****7305",
+          "bk_response_code": "00"
+        },
+        {
+          "transaction_date": "2026-06-14T20:15:00Z",
+          "transaction_type": "Compra",
+          "transaction_category": "entertainment",
+          "amount": 18.0,
+          "currency": "USD",
+          "amount_usd": 18.0,
+          "channel": "POS",
+          "merchant_name": "Cine Wayra",
+          "merchant_category": "Entretenimiento",
+          "transaction_country": "Perú",
+          "transaction_city": "Cusco",
+          "transaction_status": "Approved",
+          "product_number_masked": "****7305",
+          "bk_response_code": "00"
+        },
+        {
+          "transaction_date": "2026-06-12T21:05:33Z",
+          "transaction_type": "Compra",
+          "transaction_category": "other",
+          "amount": 1299.0,
+          "currency": "USD",
+          "amount_usd": 1299.0,
+          "channel": "Web",
+          "merchant_name": "TecnoMundo Online",
+          "merchant_category": "Electrónica",
+          "transaction_country": "Perú",
+          "transaction_city": "Lima",
+          "transaction_status": "Declined",
+          "product_number_masked": "****7305",
+          "bk_response_code": "51"
+        },
+        {
+          "transaction_date": "2026-06-10T17:30:00Z",
+          "transaction_type": "Compra",
+          "transaction_category": "health",
+          "amount": 23.9,
+          "currency": "USD",
+          "amount_usd": 23.9,
+          "channel": "POS",
+          "merchant_name": "Botica Andina",
+          "merchant_category": "Farmacias",
+          "transaction_country": "Perú",
+          "transaction_city": "Cusco",
+          "transaction_status": "Approved",
+          "product_number_masked": "****7305",
+          "bk_response_code": "00"
+        },
+        {
+          "transaction_date": "2026-06-05T11:20:00Z",
+          "transaction_type": "Retiro",
+          "transaction_category": "other",
+          "amount": 100.0,
+          "currency": "USD",
+          "amount_usd": 100.0,
+          "channel": "ATM",
+          "transaction_country": "Perú",
+          "transaction_city": "Cusco",
+          "transaction_status": "Approved",
+          "product_number_masked": "****4821",
+          "bk_response_code": "00"
+        }
+      ],
+      "CLI-EVAL-BRUNO": [
+        {
+          "transaction_date": "2026-06-15T18:20:00Z",
+          "transaction_type": "Compra",
+          "transaction_category": "food",
+          "amount": 32.8,
+          "currency": "USD",
+          "amount_usd": 32.8,
+          "channel": "POS",
+          "merchant_name": "Padaria Boa Viagem",
+          "merchant_category": "Panaderías",
+          "transaction_country": "Brazil",
+          "transaction_city": "Recife",
+          "transaction_status": "Approved",
+          "product_number_masked": "****5530",
+          "bk_response_code": "00"
+        },
+        {
+          "transaction_date": "2026-06-11T22:05:00Z",
+          "transaction_type": "Compra",
+          "transaction_category": "entertainment",
+          "amount": 64.0,
+          "currency": "USD",
+          "amount_usd": 64.0,
+          "channel": "Web",
+          "merchant_name": "Cinema Recife Antigo",
+          "merchant_category": "Entretenimiento",
+          "transaction_country": "Brazil",
+          "transaction_city": "Recife",
+          "transaction_status": "Approved",
+          "product_number_masked": "****6618",
+          "bk_response_code": "00"
+        },
+        {
+          "transaction_date": "2026-06-03T16:40:00Z",
+          "transaction_type": "Compra",
+          "transaction_category": "other",
+          "amount": 245.99,
+          "currency": "USD",
+          "amount_usd": 245.99,
+          "channel": "POS",
+          "merchant_name": "Ocean Outlet Miami",
+          "merchant_category": "Ropa",
+          "transaction_country": "USA",
+          "transaction_city": "Miami",
+          "transaction_status": "Approved",
+          "product_number_masked": "****6618",
+          "bk_response_code": "00"
+        },
+        {
+          "transaction_date": "2026-05-28T07:55:00Z",
+          "transaction_type": "Compra",
+          "transaction_category": "transport",
+          "amount": 48.5,
+          "currency": "USD",
+          "amount_usd": 48.5,
+          "channel": "POS",
+          "merchant_name": "Posto Capibaribe",
+          "merchant_category": "Combustible",
+          "transaction_country": "Brazil",
+          "transaction_city": "Recife",
+          "transaction_status": "Approved",
+          "product_number_masked": "****6618",
+          "bk_response_code": "00"
+        }
+      ]
+    },
+    "contacts": {
+      "CLI-EVAL-ANA": [
+        {
+          "interaction_date": "2026-05-20T15:10:00Z",
+          "interaction_type": "Llamada entrante",
+          "channel": "Phone",
+          "contact_reason": "Bloqueo de tarjeta",
+          "was_resolved": true,
+          "requires_followup": false
+        },
+        {
+          "interaction_date": "2026-03-02T09:45:00Z",
+          "interaction_type": "Chat",
+          "channel": "Web Chat",
+          "contact_reason": "Consulta de saldo",
+          "was_resolved": true,
+          "requires_followup": false
+        }
+      ]
+    },
+    "complaints": {
+      "CLI-EVAL-ANA": [
+        {
+          "complaint_id": "RCL-2026-0412",
+          "creation_date": "2026-05-28T09:30:00Z",
+          "case_type": "Claim",
+          "category": "Cobros",
+          "subcategory": "Comisión duplicada",
+          "reception_channel": "App",
+          "description": "Me cobraron dos veces la comisión de mantenimiento de mayo.",
+          "claimed_amount": 12.5,
+          "currency": "USD",
+          "status": "In Process",
+          "first_response_date": "2026-05-29T11:00:00Z"
+        }
+      ]
+    },
+    "campaigns": {
+      "CLI-EVAL-ANA": [
+        {
+          "send_date": "2026-06-10T08:30:00Z",
+          "send_channel": "Push",
+          "subject": "5% de reembolso en farmacias",
+          "campaign_name": "CMP_PHARMA_CASHBACK",
+          "description": "Recibe 5% de reembolso en tus compras en farmacias con tu Tarjeta Crédito.",
+          "promoted_product": "Tarjeta Crédito",
+          "start_date": "2026-06-10",
+          "end_date": "2026-06-30",
+          "campaign_status": "Active"
+        },
+        {
+          "send_date": "2026-06-01T10:00:00Z",
+          "send_channel": "Email",
+          "subject": "Doble millas en restaurantes",
+          "campaign_name": "CMP_DINING_MILES",
+          "description": "Acumula el doble de millas pagando con tu Tarjeta Crédito en restaurantes.",
+          "promoted_product": "Tarjeta Crédito",
+          "start_date": "2026-06-01",
+          "end_date": "2026-07-31",
+          "campaign_status": "Active"
+        }
+      ],
+      "CLI-EVAL-BRUNO": [
+        {
+          "send_date": "2026-06-05T09:00:00Z",
+          "send_channel": "Email",
+          "subject": "Seguro de viaje con 20% de descuento",
+          "campaign_name": "CMP_TRAVEL_INSURANCE",
+          "description": "Contrata tu Seguro de viaje con 20% de descuento antes de tu próximo viaje.",
+          "promoted_product": "Seguro",
+          "start_date": "2026-06-01",
+          "end_date": "2026-08-31",
+          "campaign_status": "Active"
+        }
+      ]
+    }
+  },
+  "branches": [
+    {
+      "branch_name": "Agencia Plaza de Armas",
+      "branch_type": "Agencia",
+      "address": "Portal de Panes 123",
+      "city": "Cusco",
+      "state": "Cusco",
+      "country": "Perú",
+      "postal_code": "08002",
+      "phone": "+51 84 600 1010",
+      "email": "plazadearmas@banco.example",
+      "opening_time": "09:00",
+      "closing_time": "18:00",
+      "has_atms": true,
+      "atm_count": 3,
+      "has_teller_windows": true,
+      "teller_window_count": 4,
+      "branch_status": "Active"
+    },
+    {
+      "branch_name": "Agencia San Blas",
+      "branch_type": "Agencia",
+      "address": "Cuesta de San Blas 540",
+      "city": "Cusco",
+      "state": "Cusco",
+      "country": "Perú",
+      "postal_code": "08003",
+      "phone": "+51 84 600 1020",
+      "email": "sanblas@banco.example",
+      "opening_time": "09:00",
+      "closing_time": "13:00",
+      "has_atms": true,
+      "atm_count": 1,
+      "has_teller_windows": true,
+      "teller_window_count": 2,
+      "branch_status": "Active"
+    },
+    {
+      "branch_name": "Sucursal Chapinero",
+      "branch_type": "Sucursal",
+      "address": "Carrera 13 # 63-20",
+      "city": "Bogotá",
+      "state": "Cundinamarca",
+      "country": "Colombia",
+      "postal_code": "110231",
+      "phone": "+57 601 555 0101",
+      "email": "chapinero@banco.example",
+      "opening_time": "08:00",
+      "closing_time": "17:00",
+      "has_atms": true,
+      "atm_count": 4,
+      "has_teller_windows": true,
+      "teller_window_count": 6,
+      "branch_status": "Active"
+    },
+    {
+      "branch_name": "Sucursal El Poblado",
+      "branch_type": "Sucursal",
+      "address": "Carrera 43A 7-50",
+      "city": "Medellín",
+      "state": "Antioquia",
+      "country": "Colombia",
+      "postal_code": "050021",
+      "phone": "+57 604 555 0202",
+      "email": "elpoblado@banco.example",
+      "opening_time": "08:00",
+      "closing_time": "16:30",
+      "has_atms": true,
+      "atm_count": 2,
+      "has_teller_windows": true,
+      "teller_window_count": 3,
+      "branch_status": "Active"
+    },
+    {
+      "branch_name": "Sucursal Reforma",
+      "branch_type": "Sucursal",
+      "address": "Paseo de la Reforma 250",
+      "city": "Ciudad de México",
+      "state": "CDMX",
+      "country": "México",
+      "postal_code": "06600",
+      "phone": "+52 55 5555 0303",
+      "email": "reforma@banco.example",
+      "opening_time": "09:00",
+      "closing_time": "16:00",
+      "has_atms": true,
+      "atm_count": 5,
+      "has_teller_windows": true,
+      "teller_window_count": 8,
+      "branch_status": "Active"
+    }
+  ],
+  "fx_rates": [
+    {"date": "2026-06-17", "source_currency": "USD", "target_currency": "MXN", "buy_rate": 16.812743, "sell_rate": 17.229695},
+    {"date": "2026-06-17", "source_currency": "USD", "target_currency": "COP", "buy_rate": 4025.84, "sell_rate": 4083.55},
+    {"date": "2026-06-17", "source_currency": "USD", "target_currency": "ARS", "buy_rate": 1187.5, "sell_rate": 1215.25}
+  ]
+}

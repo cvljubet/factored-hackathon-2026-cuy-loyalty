@@ -7,20 +7,19 @@ or an assistant reply (OUTPUT). Suites:
   with a "policy" label (e.g. "topic:datos_de_otros_clientes") also checks what intervened.
 - guardrail/turn: whole orchestrator turns with that guardrail and the rule router (live), so
   the layers are scored together: a blocked input must never reach the router, and a reply
-  must be blocked if either the scan or the guardrail objects.
+  must be blocked if either the scan or the guardrail objects. An allowed INPUT case with an
+  "engine" label must also reach that engine (e.g. a human request must hand off, not just pass).
 """
-
-from typing import Any
 
 import pytest
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from agents.factory import build_orchestrator
-from agents.guardrails import GUARDRAIL_UNAVAILABLE, BedrockGuardrail
+from agents.guardrails import GUARDRAIL_UNAVAILABLE
 from agents.safety import scan_output
 from agents.serving import InMemoryServingRepository
-from eval_kit import case_params, load_cases
+from eval_kit import case_params, intervened_policies, load_cases
 
 CASES = load_cases("guardrail.jsonl")
 SCAN_CASES = [case for case in CASES if "scan" in case]
@@ -36,52 +35,6 @@ def test_output_scan(case, scorecard):
     actual = outcome(scan_output(case["text"]).allowed)
     scorecard.record("guardrail/scan", case, case["scan"], actual)
     assert actual == case["scan"]
-
-
-class RecordingClient:
-    """The real bedrock-runtime client, keeping the last ApplyGuardrail response."""
-
-    def __init__(self, client: Any):
-        self.client = client
-        self.last: dict[str, Any] | None = None
-
-    def apply_guardrail(self, **kwargs: Any) -> dict[str, Any]:
-        self.last = None
-        self.last = self.client.apply_guardrail(**kwargs)
-        return self.last
-
-
-def intervened_policies(response: dict[str, Any]) -> list[str]:
-    """What blocked, as "topic:<name>", "content:<type>", "pii:<type>"... (never the matched text)."""
-    found = []
-    for assessment in response.get("assessments", []):
-        for topic in assessment.get("topicPolicy", {}).get("topics", []):
-            if topic.get("action") == "BLOCKED":
-                found.append(f"topic:{topic['name']}")
-        for content in assessment.get("contentPolicy", {}).get("filters", []):
-            if content.get("action") == "BLOCKED":
-                found.append(f"content:{content['type']}")
-        sensitive = assessment.get("sensitiveInformationPolicy", {})
-        for pii in sensitive.get("piiEntities", []):
-            if pii.get("action") == "BLOCKED":
-                found.append(f"pii:{pii['type']}")
-        for regex in sensitive.get("regexes", []):
-            if regex.get("action") == "BLOCKED":
-                found.append(f"regex:{regex['name']}")
-        for word in assessment.get("wordPolicy", {}).get("customWords", []):
-            if word.get("action") == "BLOCKED":
-                found.append("word:custom")
-    return sorted(set(found))
-
-
-@pytest.fixture(scope="module")
-def recording_client(bedrock_client):
-    return RecordingClient(bedrock_client)
-
-
-@pytest.fixture(scope="module")
-def guardrail(recording_client, guardrail_ids):
-    return BedrockGuardrail(recording_client, *guardrail_ids)
 
 
 def eval_context(case: dict):
@@ -140,8 +93,11 @@ def test_turn(case, scorecard, guardrail):
             assert trace.route is None, "a blocked input reached the router"
     else:
         blocked = reply.status == "blocked"
-    actual = outcome(not blocked)
+    expected, actual = case["expect"], outcome(not blocked)
+    if is_input and "engine" in case:
+        expected = f"{expected}/{case['engine']}" if expected == "allow" else expected
+        actual = f"{actual}/{reply.engine}" if not blocked else actual
     scorecard.record(
-        "guardrail/turn", case, case["expect"], actual, engine=reply.engine, blocked_reason=trace.blocked_reason
+        "guardrail/turn", case, expected, actual, engine=reply.engine, blocked_reason=trace.blocked_reason
     )
-    assert actual == case["expect"], f"engine={reply.engine} status={reply.status} reason={trace.blocked_reason}"
+    assert actual == expected, f"engine={reply.engine} status={reply.status} reason={trace.blocked_reason}"
