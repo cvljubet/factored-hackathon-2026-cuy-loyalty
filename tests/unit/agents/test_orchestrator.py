@@ -3,7 +3,7 @@ from datetime import date
 import pytest
 
 from agents.engines.escalation import InMemoryHandoffStore
-from agents.engines.recommendation import ProductRecommendation, RecommendationPayload
+from agents.loyalty import recommend
 from agents.factory import build_orchestrator
 from agents.guardrails import ALLOWED, GUARDRAIL_UNAVAILABLE, GuardrailVerdict
 from agents.messages import message
@@ -271,43 +271,36 @@ class TestGuardrails:
 
 
 class TestRecommendation:
-    def test_unavailable_until_the_model_exists(self):
+    LOW = {"scoring_source": "model", "model_eligible": True, "risk_score": 0.1592, "risk_tier": "low",
+           "model_version": "engagement-risk-v1", "as_of_date": "2026-06-17"}
+
+    def test_without_engagement_data_the_generic_benefit_is_served(self):
         harness = Harness()
 
-        reply = harness.say("¿Qué producto me recomiendas?")
+        reply = harness.say("¿Qué beneficio me recomiendas?")
 
-        assert (reply.engine, reply.status) == ("recommendation", "unavailable")
-        assert reply.reply == message("recommendations_unavailable", "es")
+        assert (reply.engine, reply.status) == ("recommendation", "answered")
+        assert "Programa de puntos" in reply.reply and "ilustrativo" in reply.reply
         assert harness.sessions.load(CUSTOMER_ID, SESSION).consecutive_failures == 0
 
-    def test_serves_a_payload_for_the_authenticated_customer(self):
-        payload = RecommendationPayload(
-            customer_id=CUSTOMER_ID,
-            model_version="test-v0",
-            as_of=date(2026, 10, 1),
-            recommendations=[
-                ProductRecommendation(product_type="savings_account", score=0.6, rank=2, top_categories=[]),
-                ProductRecommendation(product_type="travel_card", score=0.9, rank=1, top_categories=["travel"]),
-            ],
-        )
-        provider = FixedRecommendationProvider(payload)
+    def test_serves_the_authenticated_customers_benefit(self):
+        provider = FixedRecommendationProvider(recommend(CUSTOMER_ID, "es", self.LOW, "found"))
         harness = Harness(recommendations=provider)
 
-        reply = harness.say("¿Qué tarjeta me recomiendas?")
+        reply = harness.say("¿Tienes alguna promoción para mí?")
 
-        assert reply.status == "answered"
-        assert reply.reply.splitlines()[1:] == ["1. travel_card", "2. savings_account"]
+        assert (reply.engine, reply.status) == ("recommendation", "answered")
+        assert reply.reply.startswith("Te recomiendo este beneficio: Beneficios de tu programa.")
         assert provider.requested_ids == [CUSTOMER_ID]
+        assert "0.1592" not in reply.reply and "low" not in reply.reply
 
-    def test_payload_for_another_customer_is_rejected(self):
-        payload = RecommendationPayload(
-            customer_id=OTHER_CUSTOMER_ID, model_version="v", as_of=date(2026, 10, 1), recommendations=[]
-        )
-        harness = Harness(recommendations=FixedRecommendationProvider(payload))
+    def test_a_recommendation_for_another_customer_gives_the_generic_benefit(self):
+        harness = Harness(recommendations=FixedRecommendationProvider(recommend(OTHER_CUSTOMER_ID, "es", self.LOW, "found")))
 
         reply = harness.say("¿Qué me recomiendas?")
 
-        assert reply.status == "failed"
+        assert (reply.status, reply.engine) == ("answered", "recommendation")
+        assert "Programa de puntos" in reply.reply and OTHER_CUSTOMER_ID not in reply.reply
 
 
 class TestLanguage:

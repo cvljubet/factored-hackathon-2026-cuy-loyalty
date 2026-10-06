@@ -18,7 +18,7 @@ sys.path[:0] = [str(ROOT), str(ROOT / "backend")]  # the same import paths pytes
 
 from agents.context import AgentContext  # noqa: E402
 from agents.engines.inquiry import InquiryEngine  # noqa: E402
-from agents.engines.recommendation import NotReadyRecommendationProvider  # noqa: E402
+from agents.loyalty import GenericLoyaltyProvider  # noqa: E402
 from agents.guardrails import NoOpGuardrail  # noqa: E402
 from agents.model_router import ModelRouter  # noqa: E402
 from agents.models import bedrock_router_model, bedrock_runtime_client  # noqa: E402
@@ -48,7 +48,7 @@ def main() -> int:
     results = []
 
     # 1-2. The inquiry agent on Bedrock must pick an existing tool and answer from it.
-    engine = InquiryEngine(build_inquiry_model(settings, client), StaticProfiles(), NotReadyRecommendationProvider())
+    engine = InquiryEngine(build_inquiry_model(settings, client), StaticProfiles(), GenericLoyaltyProvider())
     inquiry = engine.handle(CONTEXT, "¿En qué ciudad vivo según mi perfil?")
     results.append(
         check(

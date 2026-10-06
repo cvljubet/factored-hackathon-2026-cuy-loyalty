@@ -8,7 +8,7 @@ from boto3.dynamodb.conditions import ConditionExpressionBuilder
 from botocore.exceptions import ClientError
 from botocore.stub import ANY, Stubber
 
-from agents.conversations import DynamoHandoffStore, DynamoSessionStore, session_pk, sort_time
+from agents.conversations import DynamoHandoffStore, DynamoSessionStore, session_pk, sort_time, turn_sk
 from agents.engines.escalation import Handoff
 from agents.factory import build_orchestrator
 from agents.safety import REDACTED
@@ -183,7 +183,7 @@ def test_each_turn_writes_session_metadata_and_both_messages(table, clock):
     assert [(t["role"], t["text"]) for t in turns][0] == ("customer", "hola")
     assert [t["role"] for t in turns] == ["customer", "assistant"]
     for turn in turns:
-        assert re.fullmatch(r"TURN#\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{6}Z#[0-9a-f]{32}", turn["SK"])
+        assert re.fullmatch(r"TURN#\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{6}Z#\d{10}\.\d{2}#[0-9a-f]{32}", turn["SK"])
         assert turn["SK"].endswith(turn["message_id"])
 
 
@@ -223,7 +223,9 @@ def test_load_reads_the_latest_turns_newest_first_and_returns_them_in_order(tabl
     [get, query] = table.requests
     assert (get["op"], get["SK"], get["consistent"]) == ("get_item", "SESSION", True)
     assert (query["newest_first"], query["limit"], query["consistent"]) == (True, MAX_TURNS, True)
-    assert query["between"] == (f"TURN#{sort_time(state.opening.at)}", "TURN#~")
+    opening_sk = table.items[(f"CUST#{CUSTOMER_ID}#SESSION#{SESSION}", "SESSION")]["opening_sk"]
+    assert opening_sk.startswith(f"TURN#{sort_time(state.opening.at)}#") and opening_sk.endswith(state.opening.message_id)
+    assert query["between"] == (opening_sk, "TURN#~")  # the window starts exactly at the opening turn
     assert len(state.turns) == MAX_TURNS
     assert state.turns[-1].role == "assistant"
     customer_texts = [t.text for t in state.turns if t.role == "customer"]
@@ -467,3 +469,132 @@ def test_handoff_put_is_valid_and_conditional(real_table):
         })
         DynamoHandoffStore(real_table, retention_days=30).create(handoff)
         stub.assert_no_pending_responses()
+
+
+# ---- Turn order when timestamps tie ----
+# The customer message and its reply are often created within one clock tick (about 1-16 ms on Windows).
+# Equal times must keep the save order, never the random message_id's order.
+
+TICK = START + timedelta(seconds=5)
+HIGH_ID, LOW_ID = "f" * 32, "0" * 32  # if the id decided ties, the second turn would sort first
+
+
+def turn(role, text, at=TICK, message_id=None):
+    return ConversationTurn(role=role, text=text, at=at, **({"message_id": message_id} if message_id else {}))
+
+
+def save(store, version, opening, *turns):
+    store.save(CUSTOMER_ID, SESSION, SessionState(version=version, opening=opening), new_turns=turns)
+
+
+def roles_and_texts(state):
+    return [(t.role, t.text) for t in state.turns]
+
+
+def test_a_reply_with_the_same_timestamp_stays_after_its_question(table, clock):
+    store = DynamoSessionStore(table, clock=clock)
+    question = turn("customer", "hola", message_id=HIGH_ID)
+    reply = turn("assistant", "¿En qué te ayudo?", message_id=LOW_ID)
+    save(store, 1, question, question, reply)
+
+    assert roles_and_texts(store.load(CUSTOMER_ID, SESSION)) == [("customer", "hola"), ("assistant", "¿En qué te ayudo?")]
+    customer_sk, assistant_sk = (t["SK"] for t in table.of_kind("TURN#"))
+    assert customer_sk.startswith(f"TURN#{sort_time(TICK)}#0000000001.00#") and assistant_sk.endswith(f".01#{LOW_ID}")
+
+
+def test_many_turns_sharing_one_timestamp_keep_their_save_order(table, clock):
+    store = DynamoSessionStore(table, clock=clock)
+    opening = turn("customer", "q1", message_id="f" * 32)
+    for version in range(1, 4):
+        q = opening if version == 1 else turn("customer", f"q{version}", message_id=f"{9 - version:x}" * 32)
+        a = turn("assistant", f"a{version}", message_id=f"{5 - version:x}" * 32)
+        save(store, version, opening, q, a)
+
+    assert roles_and_texts(store.load(CUSTOMER_ID, SESSION)) == [
+        ("customer", "q1"), ("assistant", "a1"), ("customer", "q2"), ("assistant", "a2"), ("customer", "q3"), ("assistant", "a3")]
+
+
+def test_the_latest_window_is_cut_correctly_when_every_turn_shares_a_timestamp(table, clock):
+    store = DynamoSessionStore(table, clock=clock)
+    opening = turn("customer", "q1")
+    exchanges = MAX_TURNS // 2 + 1  # one exchange more than the window holds
+    for version in range(1, exchanges + 1):
+        q = opening if version == 1 else turn("customer", f"q{version}")
+        save(store, version, opening, q, turn("assistant", f"a{version}"))
+
+    state = store.load(CUSTOMER_ID, SESSION)
+    expected = [(role, f"{role[0] if role == 'assistant' else 'q'}{v}".replace("customer", "q"))
+                for v in range(2, exchanges + 1) for role in ("customer", "assistant")]
+    assert roles_and_texts(state) == [(r, t) for r, t in expected]
+    assert len(state.turns) == MAX_TURNS and state.turns[0].text == "q2" and state.turns[-1].text == f"a{exchanges}"
+
+
+def test_repeated_reads_return_the_same_order(table, clock):
+    store = DynamoSessionStore(table, clock=clock)
+    opening = turn("customer", "hola", message_id=HIGH_ID)
+    save(store, 1, opening, opening, turn("assistant", "hola, ¿qué consultas?", message_id=LOW_ID))
+    save(store, 2, opening, turn("customer", "mi perfil", message_id="e" * 32), turn("assistant", "Ana, Cusco", message_id="1" * 32))
+
+    first = store.load(CUSTOMER_ID, SESSION).turns
+    assert all(store.load(CUSTOMER_ID, SESSION).turns == first for _ in range(50))
+    assert [t.text for t in first] == ["hola", "hola, ¿qué consultas?", "mi perfil", "Ana, Cusco"]
+
+
+def test_distinct_timestamps_still_order_by_time_whatever_the_ids(table, clock):
+    store = DynamoSessionStore(table, clock=clock)
+    early, later = START + timedelta(seconds=1), START + timedelta(seconds=2)
+    opening = turn("customer", "primero", at=early, message_id="f" * 32)
+    # Unique ids, deliberately in the opposite order to time.
+    save(store, 1, opening, opening, turn("assistant", "segundo", at=later, message_id="0" * 32))
+    save(store, 2, opening, turn("customer", "tercero", at=later + timedelta(milliseconds=1), message_id="1" * 32),
+         turn("assistant", "cuarto", at=later + timedelta(seconds=1), message_id="e" * 32))
+
+    assert [t.text for t in store.load(CUSTOMER_ID, SESSION).turns] == ["primero", "segundo", "tercero", "cuarto"]
+    assert table.requests[-1]["between"] == (turn_sk(opening, 1, 0), "TURN#~")  # starts at the opening turn
+
+
+def test_turns_saved_before_the_sequence_existed_still_load_in_time_order(table, clock):
+    store = DynamoSessionStore(table, clock=clock)
+    pk = session_pk(CUSTOMER_ID, SESSION)
+    old_q = turn("customer", "antes", at=START + timedelta(seconds=1), message_id="f" * 32)
+    old_a = turn("assistant", "respuesta antigua", at=START + timedelta(seconds=2), message_id="0" * 32)
+    for old in (old_q, old_a):  # the previous key format: TURN#<ts>#<message_id>
+        table.items[(pk, f"TURN#{sort_time(old.at)}#{old.message_id}")] = {
+            "PK": pk, "SK": f"TURN#{sort_time(old.at)}#{old.message_id}", "role": old.role, "text": old.text,
+            "at": old.at.isoformat(), "message_id": old.message_id, "expires_at": 1}
+    table.items[(pk, "SESSION")] = {"PK": pk, "SK": "SESSION", "version": 1, "updated_at": START.isoformat(),
+                                     "opening": old_q.model_dump_json(), "facts": "[]"}
+    save(store, 2, old_q, turn("customer", "después"), turn("assistant", "respuesta nueva"))
+
+    assert [t.text for t in store.load(CUSTOMER_ID, SESSION).turns] == ["antes", "respuesta antigua", "después", "respuesta nueva"]
+
+
+def test_turn_sort_key_format():
+    t = turn("customer", "x", message_id="a" * 32)
+    assert turn_sk(t, 7, 1) == f"TURN#{sort_time(TICK)}#0000000007.01#{'a' * 32}"
+    assert turn_sk(t, 7, 0) < turn_sk(t, 7, 1) < turn_sk(t, 8, 0) < "TURN#~"
+
+
+def test_the_opening_sort_key_is_recorded_once_and_kept(table, clock):
+    store = DynamoSessionStore(table, clock=clock)
+    opening = turn("customer", "hola")
+    save(store, 1, opening, opening, turn("assistant", "hola"))
+    pk = session_pk(CUSTOMER_ID, SESSION)
+    recorded = table.items[(pk, "SESSION")]["opening_sk"]
+    assert recorded == turn_sk(opening, 1, 0)
+    save(store, 2, opening, turn("customer", "otra"), turn("assistant", "otra"))  # opening not in this save
+    assert table.items[(pk, "SESSION")]["opening_sk"] == recorded
+
+
+def test_a_new_conversation_excludes_older_turns_even_with_the_same_timestamp(table, clock):
+    """After an idle gap the window starts at the new opening turn, not at its timestamp, so turns of the
+    previous conversation that share that timestamp stay out."""
+    store = DynamoSessionStore(table, clock=clock)
+    first = turn("customer", "conversación vieja")
+    save(store, 1, first, first, turn("assistant", "respuesta vieja"))
+    clock.advance(minutes=11)
+    assert store.load(CUSTOMER_ID, SESSION) == SessionState(version=1)  # idle: a new conversation starts
+    fresh = turn("customer", "conversación nueva")  # same TICK as the old turns
+    save(store, 2, fresh, fresh, turn("assistant", "respuesta nueva"))
+
+    assert [t.text for t in store.load(CUSTOMER_ID, SESSION).turns] == ["conversación nueva", "respuesta nueva"]

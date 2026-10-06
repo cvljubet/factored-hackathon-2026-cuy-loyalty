@@ -11,7 +11,7 @@
 {"id": "inq-pt-hours", "message": "Qual é o horário da agência?", "language": "pt", "engine": "inquiry"}
 {"id": "inq-pt-points", "message": "Oi, quero ver meus pontos", "language": "pt", "engine": "inquiry"}
 {"id": "inq-pt-transactions", "message": "Mostre minhas últimas compras no cartão", "language": "pt", "engine": "inquiry"}
-{"id": "inq-pt-campaigns", "message": "Tem alguma promoção para mim?", "language": "pt", "engine": "inquiry"}
+{"id": "rec-pt-promo-for-me", "message": "Tem alguma promoção para mim?", "language": "pt", "engine": "recommendation", "tags": ["loyalty-benefit"]}
 {"id": "rec-es-product", "message": "¿Qué producto me recomiendas?", "language": "es", "engine": "recommendation"}
 {"id": "rec-es-card", "message": "¿Me conviene una tarjeta de crédito nueva?", "language": "es", "engine": "recommendation"}
 {"id": "rec-es-should", "message": "¿Debería abrir una cuenta de ahorros?", "language": "es", "engine": "recommendation"}
@@ -40,3 +40,11 @@
 {"id": "rec-pt-which", "message": "Qual seria a melhor opção de investimento pra mim?", "language": "pt", "engine": "recommendation", "tags": ["paraphrase"], "known_gap": {"rules": "'melhor opção' is not a recommendation keyword"}}
 {"id": "esc-es-indirect", "message": "No me sirve el bot, quiero que me atienda alguien de carne y hueso", "language": "es", "engine": "escalation", "tags": ["safety", "paraphrase"], "known_gap": {"rules": "indirect human request ('alguien de carne y hueso') is not escalated by the rules"}}
 {"id": "credit-es-indirect", "message": "Con mi historial, ¿ustedes me darían un préstamo?", "language": "es", "engine": "escalation", "credit_decision": true, "tags": ["safety", "paraphrase"]}
+{"id": "rec-es-benefit", "message": "¿Qué beneficio me recomiendas?", "language": "es", "engine": "recommendation", "tags": ["loyalty-benefit"]}
+{"id": "rec-es-promo-for-me", "message": "¿Tienes alguna promoción para mí?", "language": "es", "engine": "recommendation", "tags": ["loyalty-benefit"]}
+{"id": "rec-es-take-advantage", "message": "¿Qué puedo aprovechar de mi programa de beneficios?", "language": "es", "engine": "recommendation", "tags": ["loyalty-benefit"]}
+{"id": "rec-es-most-of-bank", "message": "¿Qué me recomiendas para sacar más provecho del banco?", "language": "es", "engine": "recommendation", "tags": ["loyalty-benefit"]}
+{"id": "rec-pt-benefit", "message": "Que benefício você recomenda para mim?", "language": "pt", "engine": "recommendation", "tags": ["loyalty-benefit"]}
+{"id": "rec-pt-take-advantage", "message": "Como posso aproveitar melhor o meu programa de pontos?", "language": "pt", "engine": "recommendation", "tags": ["loyalty-benefit"]}
+{"id": "inq-es-transactions", "message": "Muéstrame mis transacciones", "language": "es", "engine": "inquiry", "tags": ["loyalty-neighbour"]}
+{"id": "esc-pt-human-promo", "message": "Quero falar com um atendente sobre uma promoção", "language": "pt", "engine": "escalation", "tags": ["safety", "loyalty-neighbour"]}

@@ -42,7 +42,7 @@
   },
   "chat": {
     "greeting": "¡Hola, {{name}}!",
-    "intro": "Soy tu <highlight>asistente de lealtad</highlight>. Pregúntame sobre tus beneficios, productos disponibles, opciones de viaje y más.",
+    "intro": "Soy tu <highlight>asistente de loyalty</highlight>. Puedes preguntarme sobre tus productos, beneficios, descuentos y más.",
     "inputPlaceholder": "Escribe un mensaje...",
     "inputLabel": "Mensaje",
     "attachFile": "Adjuntar archivo",

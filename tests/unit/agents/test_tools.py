@@ -6,7 +6,7 @@ from pydantic_ai.models.test import TestModel
 
 from agents import tools
 from agents.engines.inquiry import InquiryEngine
-from agents.engines.recommendation import NotReadyRecommendationProvider, ProductRecommendation, RecommendationPayload
+from agents.loyalty import GenericLoyaltyProvider, recommend
 from agents.tools import TOOL_NAMES
 from agent_testkit import (
     CUSTOMER_ID,
@@ -22,7 +22,7 @@ from agent_testkit import (
 
 def run(script: ScriptedModel, profiles=None, recommendations=None, customer_id=CUSTOMER_ID):
     profiles = profiles or RecordingServing()
-    engine = InquiryEngine(script.model, profiles, recommendations or NotReadyRecommendationProvider())
+    engine = InquiryEngine(script.model, profiles, recommendations or GenericLoyaltyProvider())
     return engine.handle(make_context(customer_id), "pregunta"), profiles
 
 
@@ -113,15 +113,16 @@ class TestGetMyProfile:
 
 
 class TestUnavailableTools:
-    def test_recommend_products_is_unavailable_until_the_model_exists(self):
-        result = tools.recommend_products(make_deps())
+    def test_recommend_benefit_without_engagement_data_serves_the_generic_benefit(self):
+        result = tools.recommend_benefit(make_deps())
 
-        assert (result.status, result.reason, result.data) == ("unavailable", "model_not_ready", None)
+        assert result.status == "ok" and result.data["illustrative"] is True
+        assert result.data["offer_title"] == "Programa de puntos"
 
     def test_every_tool_runs_without_a_customer_argument(self):
         """Pydantic AI's TestModel calls every registered tool with schema-valid arguments."""
         profiles = RecordingServing()
-        engine = InquiryEngine(TestModel(call_tools="all"), profiles, NotReadyRecommendationProvider())
+        engine = InquiryEngine(TestModel(call_tools="all"), profiles, GenericLoyaltyProvider())
 
         result = engine.handle(make_context(), "todo")
 
@@ -158,28 +159,25 @@ class TestModelMistakes:
         assert returned.content.status == "unavailable"
 
 
-class TestRecommendProducts:
-    def payload(self, customer_id: str) -> RecommendationPayload:
-        return RecommendationPayload(
-            customer_id=customer_id,
-            model_version="test-v0",
-            as_of=date(2026, 10, 1),
-            recommendations=[ProductRecommendation(product_type="travel_card", score=0.8, rank=1, top_categories=["travel"])],
-        )
+class TestRecommendBenefit:
+    HIGH = {"scoring_source": "model", "model_eligible": True, "risk_score": 0.71, "risk_tier": "high",
+            "model_version": "engagement-risk-v1", "as_of_date": "2026-06-17"}
 
-    def test_serves_the_context_customers_payload(self):
-        provider = FixedRecommendationProvider(self.payload(CUSTOMER_ID))
+    def test_serves_the_context_customers_customer_safe_payload(self):
+        provider = FixedRecommendationProvider(recommend(CUSTOMER_ID, "es", self.HIGH, "found"))
 
-        result = tools.recommend_products(make_deps(recommendations=provider))
+        result = tools.recommend_benefit(make_deps(recommendations=provider))
 
         assert result.status == "ok"
-        assert result.data["recommendations"][0]["product_type"] == "travel_card"
-        assert "customer_id" not in result.data
+        assert set(result.data) == {"offer_title", "offer_description", "customer_safe_reason", "illustrative",
+                                    "illustrative_note"}
+        assert result.data["offer_title"] == "Recompensa de fidelidad"
         assert provider.requested_ids == [CUSTOMER_ID]
 
-    def test_refuses_a_payload_for_another_customer(self):
-        provider = FixedRecommendationProvider(self.payload(OTHER_CUSTOMER_ID))
+    def test_a_recommendation_for_another_customer_is_discarded_for_the_generic_one(self):
+        provider = FixedRecommendationProvider(recommend(OTHER_CUSTOMER_ID, "es", self.HIGH, "found"))
 
-        result = tools.recommend_products(make_deps(recommendations=provider))
+        result = tools.recommend_benefit(make_deps(recommendations=provider))
 
-        assert (result.status, result.data) == ("error", None)
+        assert result.status == "ok" and result.data["offer_title"] == "Programa de puntos"
+        assert OTHER_CUSTOMER_ID not in result.model_dump_json()

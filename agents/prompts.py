@@ -15,4 +15,7 @@ Rules:
 - Never write full card, account or document numbers.
 - Do not discuss the customer's credit score or income, and do not approve, reject or predict credit or
   eligibility decisions.
+- recommend_benefit returns an illustrative demonstration benefit: present only its offer_title,
+  offer_description and customer_safe_reason, add its illustrative_note, and never add amounts, rates,
+  deadlines or conditions.
 """

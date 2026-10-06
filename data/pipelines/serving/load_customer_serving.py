@@ -24,6 +24,7 @@ Locally, against the team account (a profile for another account is refused):
 """
 
 import argparse
+import hashlib
 import io
 import json
 import math
@@ -348,10 +349,29 @@ def build_item(spec: TableSpec, row: Mapping[str, Any]) -> dict[str, Any]:
     return item
 
 
-def is_served(spec: TableSpec, row: Mapping[str, Any], customers: frozenset[str] | None) -> bool:
+def shard_of(customer_id: Any, shards: int) -> int:
+    """A stable shard for a customer (the same in every process, unlike Python's hash())."""
+    digest = hashlib.blake2b(str(customer_id).encode(), digest_size=8).digest()
+    return int.from_bytes(digest, "big") % shards
+
+
+def parse_shard(text: str) -> tuple[int, int]:
+    """'3/8' -> (3, 8): this process loads the customers in shard 3 of 8."""
+    match = re.fullmatch(r"(\d+)/(\d+)", text)
+    if not match or not 0 <= int(match.group(1)) < int(match.group(2)):
+        raise argparse.ArgumentTypeError(f"--shard must be K/N with 0 <= K < N, not {text!r}")
+    return int(match.group(1)), int(match.group(2))
+
+
+def is_served(spec: TableSpec, row: Mapping[str, Any], customers: frozenset[str] | None,
+              shard: tuple[int, int] | None = None) -> bool:
     if spec.where and row.get(spec.where) is not True:
         return False
-    return customers is None or spec.scope != "customer" or row.get("customer_id") in customers
+    if spec.scope != "customer":
+        return True
+    if shard is not None and shard_of(row.get("customer_id"), shard[1]) != shard[0]:
+        return False
+    return customers is None or row.get("customer_id") in customers
 
 
 # ---- Reading the agent zone ----
@@ -435,6 +455,7 @@ def publish(
     batches: Iterable[list[Mapping[str, Any]]],
     table: Any = None,
     customers: frozenset[str] | None = None,
+    shard: tuple[int, int] | None = None,
 ) -> Stats:
     """Builds every item and, given a DynamoDB Table, writes them in batches of 25 (boto3's
     batch_writer, which resends unprocessed items). Without a table it only counts."""
@@ -445,7 +466,7 @@ def publish(
         for rows in batches:
             for row in rows:
                 stats.rows_read += 1
-                if not is_served(spec, row, customers):
+                if not is_served(spec, row, customers, shard):
                     continue
                 try:
                     item = build_item(spec, row)
@@ -489,6 +510,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument("--expected-account", default=TEAM_ACCOUNT)
     p.add_argument("--customer-id", action="append", default=[], help="Load only this customer; repeatable.")
     p.add_argument("--limit-customers", type=int, help="Load only the N smallest customer_ids.")
+    p.add_argument("--shard", type=parse_shard, help="K/N: load only customers in shard K of N, so N processes can "
+                   "load a customer-scoped table in parallel. Reference tables load in full.")
     p.add_argument("--batch-rows", type=int, default=5000, help="Rows per Parquet record batch.")
     args = p.parse_args(argv)
     if not args.table and not args.all:
@@ -516,8 +539,9 @@ def main(argv: list[str]) -> None:
         table = session.resource("dynamodb").Table(args.dynamodb_table)
         table.load()  # fails early if the table is missing
     for spec in specs:
-        stats = publish(spec, zone.batches(spec, args.batch_rows), table, customers)
-        print(stats.line(args.dry_run))
+        stats = publish(spec, zone.batches(spec, args.batch_rows), table, customers, args.shard)
+        shard_note = f" (shard {args.shard[0]}/{args.shard[1]})" if args.shard and spec.scope == "customer" else ""
+        print(stats.line(args.dry_run) + shard_note)
         if args.dry_run and stats.sample:
             print(f"    e.g. {stats.sample['PK']} | {stats.sample['SK']} | {sorted(set(stats.sample) - {'PK', 'SK'})}")
 
