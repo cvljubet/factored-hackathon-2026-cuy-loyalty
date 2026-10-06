@@ -1,4 +1,4 @@
-"""Evaluation suites for routing and guardrails: labelled datasets scored case by case.
+"""Evaluation suites for routing, guardrails and the inquiry agent: labelled datasets scored case by case.
 
 Offline suites (rule router, deterministic output scan) run with every pytest run.
 Live suites call Bedrock and run only with EVAL_LIVE=1:
@@ -106,6 +106,8 @@ def run_metadata() -> dict[str, Any]:
         "live": LIVE,
         "bedrock_region": os.environ.get("BEDROCK_REGION"),
         "router_model_id": os.environ.get("BEDROCK_ROUTER_MODEL_ID"),
+        "inquiry_model_id": os.environ.get("BEDROCK_INQUIRY_MODEL_ID"),
+        "inquiry_fallback_model_id": os.environ.get("BEDROCK_INQUIRY_FALLBACK_MODEL_ID"),
         "guardrail_id": os.environ.get("BEDROCK_GUARDRAIL_ID"),
         "guardrail_version": os.environ.get("BEDROCK_GUARDRAIL_VERSION"),
     }
@@ -144,3 +146,18 @@ def guardrail_ids() -> tuple[str, str]:
     if not guardrail_id or not version:
         pytest.fail("Set BEDROCK_GUARDRAIL_ID and BEDROCK_GUARDRAIL_VERSION for the guardrail evaluation")
     return guardrail_id, version
+
+
+@pytest.fixture(scope="session")
+def recording_client(bedrock_client):
+    """The client the guardrail calls through, keeping its last response (which policies intervened)."""
+    from eval_kit import RecordingClient
+
+    return RecordingClient(bedrock_client)
+
+
+@pytest.fixture(scope="session")
+def guardrail(recording_client, guardrail_ids):
+    from agents.guardrails import BedrockGuardrail
+
+    return BedrockGuardrail(recording_client, *guardrail_ids)

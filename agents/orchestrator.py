@@ -41,6 +41,8 @@ class TurnTrace(BaseModel):
     models_used: tuple[str, ...] = ()
     fallback_used: bool = False
     blocked_reason: str | None = None
+    # This turn failed and was not handed off (the failure was counted).
+    failed: bool = False
     consecutive_failures: int = Field(default=0, ge=0)
     # Milliseconds per stage that ran: guardrail_input, router, engine, guardrail_output.
     stage_ms: dict[str, float] = Field(default_factory=dict)
@@ -108,7 +110,14 @@ class Orchestrator:
         trace_from = result
         facts = merge_facts(state.facts, result.facts)
 
-        failures = context.consecutive_failures + 1 if result.failed else 0
+        if result.failed:
+            failures = context.consecutive_failures + 1
+        elif route is None:
+            # A guardrail intervention (the only unrouted turn that did not fail) neither fails the turn
+            # nor shows the assistant could help, so the count stands: fail, blocked, fail still hands off.
+            failures = context.consecutive_failures
+        else:
+            failures = 0
         if result.failed and failures >= FAILURES_BEFORE_ESCALATION:
             engine = "escalation"
             result = self.escalation.escalate(context, "repeated_failures", user_message, history, facts, opening)
@@ -145,6 +154,7 @@ class Orchestrator:
             models_used=trace_from.models_used,
             fallback_used=trace_from.fallback_used,
             blocked_reason=blocked_reason,
+            failed=result.failed,
             consecutive_failures=failures,
             stage_ms=stage_ms,
         )
@@ -175,8 +185,8 @@ class Orchestrator:
         with _timed(stage_ms, "guardrail_input"):
             verdict = self.guardrail.check_input(context, user_message)
         if not verdict.allowed:
-            # An intervention (e.g. a prompt attack) is not a failure to help, so it never escalates.
-            # An unreachable guardrail is: two in a row hand the customer to a human.
+            # An intervention (e.g. a prompt attack) is not a failure to help: it neither counts toward
+            # escalation nor resets the count. An unreachable guardrail is a failure: two in a row hand off.
             unavailable = verdict.reason == GUARDRAIL_UNAVAILABLE
             blocked = EngineResult(
                 reply=message("input_blocked", context.language), status="blocked", failed=unavailable

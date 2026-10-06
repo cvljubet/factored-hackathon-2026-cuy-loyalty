@@ -25,7 +25,8 @@ orchestration stays plain application code.
    - recommendation: model output if served, else "not available yet" (`engines/recommendation.py`)
    - out of scope: fixed reply
 7. Output screening: the 8+ digit scan (`safety.scan_output`) plus the output guardrail.
-8. A failed turn increments the failure count; the second failure in a row hands off.
+8. A failed turn increments the failure count; the second failure in a row hands off. A guardrail
+   intervention leaves the count as it is; any other turn resets it.
 9. Save the session and this turn's two messages, only if no other request saved it since step 1
    (`SessionConflict` otherwise; the chat route answers 409).
 
