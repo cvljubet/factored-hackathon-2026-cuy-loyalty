@@ -3,11 +3,16 @@
 All items of one session share a partition:
 
     PK = CUST#<customer_id>#SESSION#<session_id>
-    SK = SESSION                     version, language, failure count, opening message, facts, handoff state
-    SK = TURN#<ts>#<message_id>      one customer or assistant message (text already redacted)
-    SK = HANDOFF#<ts>#<handoff_id>   one escalation: the Handoff as JSON in payload
+    SK = SESSION                       version, language, failure count, opening message (and opening_sk,
+                                       its turn's sort key), facts, handoff state
+    SK = TURN#<ts>#<seq>#<message_id>  one customer or assistant message (text already redacted)
+    SK = HANDOFF#<ts>#<handoff_id>     one escalation: the Handoff as JSON in payload
 
-<ts> is UTC ISO 8601 with microseconds and a fixed width, so SK order is time order. Every item has
+<ts> is UTC ISO 8601 with microseconds and a fixed width, so SK order is time order. <seq> breaks ties
+between turns with the same <ts> (the customer message and its reply are often created within one clock
+tick): <version>.<index>, the session version of the save and the turn's position in it, so equal times
+keep the order the turns were saved in instead of the random message_id's. Turns saved before <seq>
+existed (TURN#<ts>#<message_id>) still load and sort by time. Every item has
 expires_at (epoch seconds) for the table's TTL. Facts and handoffs are JSON strings: tool results hold
 floats, which the boto3 resource layer refuses.
 
@@ -52,6 +57,11 @@ def session_pk(customer_id: str, session_id: str) -> str:
 def sort_time(at: datetime) -> str:
     """Fixed-width UTC time for sort keys: 2026-10-05T21:30:00.123456Z."""
     return at.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+
+def turn_sk(turn: ConversationTurn, version: int, index: int) -> str:
+    """TURN#<ts>#<version>.<index>#<message_id>: time first, then save order for equal times."""
+    return f"{TURN_PREFIX}{sort_time(turn.at)}#{version:010d}.{index:02d}#{turn.message_id}"
 
 
 def _epoch(at: datetime) -> int:
@@ -104,7 +114,7 @@ class DynamoSessionStore:
             version=version,
             consecutive_failures=int(item.get("consecutive_failures", 0)),
             language=item.get("language"),
-            turns=self._recent_turns(pk, opening),
+            turns=self._recent_turns(pk, opening, item.get("opening_sk")),
             facts=_facts.validate_json(item.get("facts", "[]")),
             opening=opening,
             handoff_count=int(item.get("handoff_count", 0)),
@@ -112,10 +122,14 @@ class DynamoSessionStore:
             last_handoff_reason=item.get("last_handoff_reason"),
         )
 
-    def _recent_turns(self, pk: str, opening: ConversationTurn | None) -> tuple[ConversationTurn, ...]:
+    def _recent_turns(
+        self, pk: str, opening: ConversationTurn | None, opening_sk: str | None = None
+    ) -> tuple[ConversationTurn, ...]:
         """The latest MAX_TURNS turns since the opening message (older ones belong to an expired
-        conversation in the same session), oldest first."""
-        start = f"{TURN_PREFIX}{sort_time(opening.at)}" if opening else TURN_PREFIX
+        conversation in the same session), oldest first. The window starts at the opening turn's own sort
+        key when the session recorded it, so an older turn with the same timestamp stays out; sessions saved
+        before opening_sk existed start at the opening's timestamp."""
+        start = opening_sk or (f"{TURN_PREFIX}{sort_time(opening.at)}" if opening else TURN_PREFIX)
         page = self.table.query(
             KeyConditionExpression=Key("PK").eq(pk) & Key("SK").between(start, TURN_END),
             ScanIndexForward=False,
@@ -148,6 +162,11 @@ class DynamoSessionStore:
         }
         present = {name: value for name, value in values.items() if value is not None}
         absent = [name for name, value in values.items() if value is None]
+        # The save that writes the conversation's opening turn records that turn's exact sort key; later
+        # saves leave it as is (it is never in `absent`, so never removed).
+        for index, turn in enumerate(new_turns):
+            if state.opening is not None and turn.message_id == state.opening.message_id:
+                present["opening_sk"] = turn_sk(turn, state.version, index)
         # Placeholders for every name, since some (e.g. language) may be DynamoDB reserved words.
         sets = [f"#{name} = :{name}" for name in present] + ["#created_at = if_not_exists(#created_at, :now)"]
         expression = "SET " + ", ".join(sets) + (" REMOVE " + ", ".join(f"#{n}" for n in absent) if absent else "")
@@ -157,7 +176,7 @@ class DynamoSessionStore:
                 "Key": {"PK": pk, "SK": SESSION_SK},
                 "UpdateExpression": expression,
                 "ConditionExpression": "attribute_not_exists(PK) OR #version = :previous",
-                "ExpressionAttributeNames": {f"#{name}": name for name in [*values, "created_at"]},
+                "ExpressionAttributeNames": {f"#{name}": name for name in [*values, *present, "created_at"]},
                 "ExpressionAttributeValues": {
                     **{f":{name}": value for name, value in present.items()},
                     ":now": now.isoformat(),
@@ -171,7 +190,7 @@ class DynamoSessionStore:
                     "TableName": self.table.name,
                     "Item": {
                         "PK": pk,
-                        "SK": f"{TURN_PREFIX}{sort_time(turn.at)}#{turn.message_id}",
+                        "SK": turn_sk(turn, state.version, index),
                         "role": turn.role,
                         "text": turn.text,
                         "at": turn.at.isoformat(),
@@ -181,7 +200,7 @@ class DynamoSessionStore:
                     "ConditionExpression": "attribute_not_exists(SK)",
                 }
             }
-            for turn in new_turns
+            for index, turn in enumerate(new_turns)
         ]
         try:
             self.table.meta.client.transact_write_items(TransactItems=[session_update, *turn_puts])
