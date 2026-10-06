@@ -1,0 +1,97 @@
+# Validates every pull request to main and every push to main. Needs no AWS credentials and
+# calls no AWS service: unit tests use dummy credentials (tests/unit/conftest.py), the live
+# evaluation suites skip unless EVAL_LIVE=1, and Terraform is validated without a backend.
+# cd.yml calls this workflow first, so a deployment runs the same checks.
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  python:
+    name: Python tests and offline evaluations
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      EVAL_LIVE: "0" # never call Bedrock from CI
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      # Fails if uv.lock is out of date with pyproject.toml.
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Unit tests
+        run: uv run pytest tests/unit
+
+      - name: Offline evaluations
+        run: uv run pytest tests/evaluation
+
+  frontend:
+    name: Frontend lint, tests and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
+
+  terraform:
+    name: Terraform format and validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: "1.16.5"
+          terraform_wrapper: false
+
+      - name: terraform fmt -check
+        run: terraform -chdir=infrastructure/terraform fmt -check -recursive
+
+      # -backend=false: no state bucket and no AWS credentials needed.
+      - name: terraform validate
+        run: |
+          for root in bootstrap envs/dev envs/dev-app; do
+            echo "::group::$root"
+            terraform -chdir="infrastructure/terraform/$root" init -backend=false -input=false
+            terraform -chdir="infrastructure/terraform/$root" validate
+            echo "::endgroup::"
+          done

@@ -24,6 +24,7 @@ of it is deployed on AWS with Terraform.
 - [Repository layout](#repository-layout)
 - [Running locally](#running-locally)
 - [Tests](#tests)
+- [CI/CD](#cicd)
 - [Operational scripts](#operational-scripts)
 - [Documentation](#documentation)
 - [Known limitations](#known-limitations)
@@ -334,6 +335,24 @@ created by an admin, as described in
 | `cd frontend && npm test` | Frontend (Vitest + Testing Library) |
 | `cd frontend && npm run lint` | Frontend lint (oxlint) |
 
+## CI/CD
+
+- **CI is operational.** [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on every pull request to `main`
+  and every push to `main`, with no AWS credentials:
+  - `uv run pytest tests/unit` and the offline evaluations (`uv run pytest tests/evaluation`);
+  - `npm ci`, `npm run lint`, `npm test` and `npm run build`;
+  - `terraform fmt -check` and `validate`.
+- **CD is defined as code and triggered manually.** [`.github/workflows/cd.yml`](.github/workflows/cd.yml) runs
+  only from `workflow_dispatch`:
+  - CI, then build and push the backend image tagged with the commit SHA;
+  - `terraform plan -var backend_image_tag=<sha>`;
+  - only with approval: apply, check ECS and upload the frontend.
+- **The hackathon's final release is manual.** It goes through the already validated manual path. This is a
+  deliberate risk-control decision: turning CD on needs an OIDC provider and roles in the team account, which
+  aren't created yet.
+
+See [docs/deployment.md](docs/deployment.md) for the commands, the gates and the configuration required.
+
 ## Operational scripts
 
 ```bash
@@ -363,6 +382,7 @@ uv run python scripts/handoffs.py
 | --- | --- |
 | [docs/architecture.md](docs/architecture.md) | Lake zones, agent-zone isolation, masking, `bk_` columns, fairness |
 | [docs/data-contracts.md](docs/data-contracts.md) | Generated per-table contracts: types, required fields, allowed values, ranges |
+| [docs/deployment.md](docs/deployment.md) | Manual release, CI and CD workflows, configuration required to turn CD on |
 | [docs/limitations.md](docs/limitations.md) | Source-data defects and how the pipeline handles them |
 | [docs/ml/engagement_risk_model.md](docs/ml/engagement_risk_model.md) | Engagement-risk model: target, baselines, results, productionization |
 | [data/pipelines/README.md](data/pipelines/README.md) | Glue jobs, data-quality rules, reports, serving loader |

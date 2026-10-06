@@ -79,7 +79,7 @@ def _inquiry() -> dict[str, Any]:
     from agents.context import AgentContext
     from agents.deps import AgentDeps
     from agents.engines.inquiry import MAX_ROUNDS
-    from agents.engines.recommendation import NotReadyRecommendationProvider
+    from agents.loyalty import GenericLoyaltyProvider
     from agents.inquiry_agent import inquiry_agent
     from agents.serving import InMemoryServingRepository
 
@@ -91,7 +91,7 @@ def _inquiry() -> dict[str, Any]:
 
     # The instructions depend only on the customer's language; "es" stands for both.
     context = AgentContext(customer_id="SNAPSHOT", session_id="snapshot", language="es")
-    deps = AgentDeps(context, InMemoryServingRepository(), NotReadyRecommendationProvider())
+    deps = AgentDeps(context, InMemoryServingRepository(), GenericLoyaltyProvider())
     inquiry_agent.run_sync("snapshot", deps=deps, model=FunctionModel(capture))
     info = offered[0]
     return {

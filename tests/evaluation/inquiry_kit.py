@@ -42,8 +42,8 @@ from pydantic_ai.models import Model
 from agents.context import AgentContext
 from agents.engines.base import EngineResult
 from agents.engines.inquiry import InquiryEngine
-from agents.engines.recommendation import NotReadyRecommendationProvider
 from agents.guardrails import GUARDRAIL_UNAVAILABLE, Guardrail
+from agents.loyalty import GenericLoyaltyProvider
 from agents.safety import scan_output
 from agents.serving import InMemoryServingRepository
 from agents.text import normalize
@@ -137,7 +137,7 @@ def run_turn(
     case: dict[str, Any], model: Model, data: Mapping[str, Any], meter: MeteredClient | None = None
 ) -> TurnOutcome:
     serving = RecordingServing(data)
-    engine = InquiryEngine(model, serving, NotReadyRecommendationProvider())
+    engine = InquiryEngine(model, serving, GenericLoyaltyProvider())
     if meter is not None:
         meter.reset()
     start = time.perf_counter()

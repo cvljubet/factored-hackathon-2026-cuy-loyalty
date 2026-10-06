@@ -1,0 +1,310 @@
+# Manual deployment of the dev environment, mirroring the documented manual path
+# (infrastructure/terraform/README.md, docs/deployment.md):
+#
+#   CI checks -> docker build (backend/Dockerfile) -> push <ECR repo>:<git sha> ->
+#   terraform plan -var backend_image_tag=<git sha> -> [approved] terraform apply ->
+#   wait for ECS and check the deployed image -> build and upload the frontend
+#
+# Terraform stays the only thing that changes the ECS service: the image tag is the
+# envs/dev variable backend_image_tag, as in a manual deploy. Never runs on push.
+#
+# Nothing here works until AWS OIDC roles and repository variables exist (see
+# docs/deployment.md). Without them the preflight job fails before any AWS call.
+# By default the workflow stops after the plan; applying needs the `apply` input,
+# the CD_APPLY_ENABLED variable and an approval on the GitHub environment.
+name: CD (manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment (the Terraform root infrastructure/terraform/envs/dev)
+        type: choice
+        options: [dev]
+        default: dev
+      apply:
+        description: Apply the plan and upload the frontend (otherwise stop after the plan)
+        type: boolean
+        default: false
+
+permissions: {}
+
+concurrency:
+  group: cd-${{ inputs.environment }}
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: us-east-2
+  TF_ROOT: infrastructure/terraform/envs/${{ inputs.environment }}
+  TF_VERSION: "1.16.5"
+  IMAGE_TAG: ${{ github.sha }}
+
+jobs:
+  preflight:
+    name: Preflight (configuration and target)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check the ref and the required configuration
+        env:
+          APPLY: ${{ inputs.apply }}
+          AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+          AWS_PLAN_ROLE_ARN: ${{ vars.AWS_PLAN_ROLE_ARN }}
+          AWS_DEPLOY_ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+          CD_APPLY_ENABLED: ${{ vars.CD_APPLY_ENABLED }}
+        run: |
+          fail=0
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "::error::CD deploys main only; this run is on $GITHUB_REF."; fail=1
+          fi
+          for name in AWS_ACCOUNT_ID AWS_PLAN_ROLE_ARN TF_STATE_BUCKET; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Repository variable $name is not set (see docs/deployment.md)."; fail=1
+            fi
+          done
+          if [ "$APPLY" = "true" ]; then
+            if [ "$CD_APPLY_ENABLED" != "true" ]; then
+              echo "::error::apply was requested but repository variable CD_APPLY_ENABLED is not 'true'."; fail=1
+            fi
+            if [ -z "$AWS_DEPLOY_ROLE_ARN" ]; then
+              echo "::error::apply was requested but repository variable AWS_DEPLOY_ROLE_ARN is not set."; fail=1
+            fi
+          fi
+          exit $fail
+
+      - name: Summary
+        env:
+          TARGET: ${{ inputs.environment }}
+          APPLY: ${{ inputs.apply }}
+        run: |
+          {
+            echo "### Deployment target"
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Environment | \`$TARGET\` (\`$TF_ROOT\`) |"
+            echo "| Commit | \`$GITHUB_SHA\` |"
+            echo "| Backend image tag | \`$IMAGE_TAG\` |"
+            echo "| Apply requested | \`$APPLY\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  ci:
+    name: CI
+    needs: preflight
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
+  build-backend:
+    name: Build and push the backend image
+    needs: ci
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write # OIDC token for AWS; no stored keys
+    outputs:
+      image: ${{ steps.push.outputs.image }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_PLAN_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
+          role-session-name: cd-build-${{ github.run_id }}
+
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      # The repository URL is a Terraform output (backend_ecr_repository_url), not hard-coded.
+      - name: Read the ECR repository from Terraform
+        id: repo
+        env:
+          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+        run: |
+          terraform -chdir="$TF_ROOT" init -input=false -backend-config="bucket=$TF_STATE_BUCKET" > /dev/null
+          echo "url=$(terraform -chdir="$TF_ROOT" output -raw backend_ecr_repository_url)" >> "$GITHUB_OUTPUT"
+
+      - uses: aws-actions/amazon-ecr-login@v2
+
+      # Same build as the manual path (backend/README.md). A tag that already exists is
+      # never overwritten: one commit, one image.
+      - name: Build and push ${{ env.IMAGE_TAG }}
+        id: push
+        env:
+          REPO_URL: ${{ steps.repo.outputs.url }}
+        run: |
+          image="$REPO_URL:$IMAGE_TAG"
+          if aws ecr describe-images --repository-name "${REPO_URL#*/}" --image-ids imageTag="$IMAGE_TAG" > /dev/null 2>&1; then
+            echo "$image already exists in ECR; not rebuilding."
+          else
+            docker build --platform linux/amd64 -f backend/Dockerfile -t "$image" .
+            docker push "$image"
+          fi
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+          echo "Backend image: \`$image\`" >> "$GITHUB_STEP_SUMMARY"
+
+  plan:
+    name: Terraform plan
+    needs: build-backend
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      changes: ${{ steps.plan.outputs.changes }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_PLAN_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
+          role-session-name: cd-plan-${{ github.run_id }}
+
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: terraform fmt -check
+        run: terraform -chdir=infrastructure/terraform fmt -check -recursive
+
+      - name: terraform init
+        env:
+          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+        run: terraform -chdir="$TF_ROOT" init -input=false -backend-config="bucket=$TF_STATE_BUCKET"
+
+      - name: terraform validate
+        run: terraform -chdir="$TF_ROOT" validate
+
+      # The repository is public, so the full plan (account IDs, ARNs, task environment) is
+      # kept out of the log: only the list of changed resources is printed. Its fingerprint
+      # lets the apply job refuse a plan that differs from the one reviewed here.
+      - name: terraform plan
+        id: plan
+        run: |
+          terraform -chdir="$TF_ROOT" plan -input=false -lock-timeout=5m -no-color \
+            -var="backend_image_tag=$IMAGE_TAG" -out=tfplan > plan.log
+          terraform -chdir="$TF_ROOT" show -json tfplan \
+            | jq -c '[(.resource_changes // [])[] | select(.change.actions != ["no-op"]) | {address, actions: .change.actions}]' > changes.json
+          echo "changes=$(sha256sum changes.json | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Terraform plan for backend_image_tag=\`$IMAGE_TAG\`"
+            echo '```'
+            grep -E '^Plan:|^No changes' plan.log || true
+            jq -r '.[] | "\(.actions | join("/"))  \(.address)"' changes.json
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+  deploy:
+    name: Apply and upload the frontend
+    needs: plan
+    if: inputs.apply && vars.CD_APPLY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    # Configure required reviewers on this GitHub environment before enabling apply.
+    environment: ${{ inputs.environment }}
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
+          role-session-name: cd-deploy-${{ github.run_id }}
+
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: terraform init
+        env:
+          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+        run: terraform -chdir="$TF_ROOT" init -input=false -backend-config="bucket=$TF_STATE_BUCKET" > /dev/null
+
+      - name: Re-plan and compare with the reviewed plan
+        env:
+          REVIEWED: ${{ needs.plan.outputs.changes }}
+        run: |
+          terraform -chdir="$TF_ROOT" plan -input=false -lock-timeout=5m -no-color \
+            -var="backend_image_tag=$IMAGE_TAG" -out=tfplan > plan.log
+          terraform -chdir="$TF_ROOT" show -json tfplan \
+            | jq -c '[(.resource_changes // [])[] | select(.change.actions != ["no-op"]) | {address, actions: .change.actions}]' > changes.json
+          if [ "$(sha256sum changes.json | cut -d' ' -f1)" != "$REVIEWED" ]; then
+            echo "::error::The plan changed since it was reviewed; rerun the workflow."
+            exit 1
+          fi
+
+      - name: terraform apply
+        run: |
+          terraform -chdir="$TF_ROOT" apply -input=false -lock-timeout=5m -no-color tfplan > apply.log
+          grep -E '^Apply complete' apply.log | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # The circuit breaker rolls a failed deployment back, and a rolled-back service is
+      # also "stable", so the running image is checked too.
+      - name: Wait for ECS and check the deployed image
+        run: |
+          cluster=$(terraform -chdir="$TF_ROOT" output -raw backend_ecs_cluster)
+          service=$(terraform -chdir="$TF_ROOT" output -raw backend_ecs_service)
+          aws ecs wait services-stable --cluster "$cluster" --services "$service"
+          task_def=$(aws ecs describe-services --cluster "$cluster" --services "$service" \
+            --query 'services[0].taskDefinition' --output text)
+          image=$(aws ecs describe-task-definition --task-definition "$task_def" \
+            --query 'taskDefinition.containerDefinitions[0].image' --output text)
+          if [ "${image##*:}" != "$IMAGE_TAG" ]; then
+            echo "::error::ECS runs image tag ${image##*:}, expected $IMAGE_TAG (rolled back?)."
+            exit 1
+          fi
+          curl -fsS --retry 5 --retry-delay 10 "$(terraform -chdir="$TF_ROOT" output -raw backend_https_url)/health"
+          echo "ECS service is stable on \`$IMAGE_TAG\`." >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      # Build-time configuration comes from the same Terraform outputs a developer copies into
+      # frontend/.env.local; none of it is secret.
+      - name: Build the frontend
+        working-directory: frontend
+        run: |
+          out() { terraform -chdir="../$TF_ROOT" output -raw "$1"; }
+          # Assigned before export so a missing output fails the step (set -e).
+          VITE_AWS_REGION=$(out aws_region)
+          VITE_COGNITO_USER_POOL_ID=$(out cognito_user_pool_id)
+          VITE_COGNITO_CLIENT_ID=$(out cognito_client_id)
+          VITE_API_BASE_URL=$(out backend_https_url)
+          export VITE_AWS_REGION VITE_COGNITO_USER_POOL_ID VITE_COGNITO_CLIENT_ID VITE_API_BASE_URL
+          npm ci
+          npm run build
+
+      # Cache-Control comes from the distribution's response-header policies (hashed
+      # /assets/* for a year, everything else no-cache), so no object metadata and no
+      # invalidation are needed. Assets go first and index.html last, so the live
+      # index.html never points at files that are not uploaded yet. Old hashed assets are
+      # kept for tabs still running the previous build.
+      - name: Upload the frontend
+        run: |
+          bucket=$(terraform -chdir="$TF_ROOT" output -raw frontend_bucket_name)
+          aws s3 sync frontend/dist "s3://$bucket" --exclude index.html --no-progress
+          aws s3 cp frontend/dist/index.html "s3://$bucket/index.html" --no-progress
+          echo "Frontend uploaded: $(terraform -chdir="$TF_ROOT" output -raw frontend_https_url)" >> "$GITHUB_STEP_SUMMARY"
