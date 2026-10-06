@@ -1,14 +1,17 @@
+import time
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from agents.context import Language
 from agents.engines.base import ResultStatus
 from agents.routing import Engine
+from agents.sessions import SessionConflict
 from app.auth import CurrentCustomerId
 from app.chat.dependencies import OrchestratorDep
+from app.observability import log_turn
 
 router = APIRouter()
 
@@ -40,12 +43,20 @@ class ChatResponse(BaseModel):
 def chat(body: ChatRequest, customer_id: CurrentCustomerId, orchestrator: OrchestratorDep) -> ChatResponse:
     """One assistant turn for the signed-in customer."""
     session_id = body.session_id or uuid.uuid4().hex
-    reply = orchestrator.handle(
-        customer_id=customer_id,
-        session_id=session_id,
-        user_message=body.message,
-        language_hint=body.language,
-    )
+    start = time.perf_counter()
+    try:
+        reply = orchestrator.handle(
+            customer_id=customer_id,
+            session_id=session_id,
+            user_message=body.message,
+            language_hint=body.language,
+        )
+    except SessionConflict:
+        # Another request (a double submit or a second tab) saved this session first; nothing was saved.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="The conversation changed meanwhile; send your message again."
+        ) from None
+    log_turn(reply, (time.perf_counter() - start) * 1000)
     return ChatResponse(
         session_id=reply.session_id,
         reply=reply.reply,

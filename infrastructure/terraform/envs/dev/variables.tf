@@ -26,15 +26,15 @@ variable "backend_image_tag" {
 }
 
 # 0 stops the backend (and its Bedrock calls) without destroying anything; 1 starts it again.
-# Never more than 1 while sessions and handoffs live in process memory.
+# 2 is safe: sessions are in DynamoDB and a stale save is refused (version check), not lost.
 variable "backend_desired_count" {
-  description = "Backend tasks: 1 to run, 0 to stop without destroying resources."
+  description = "Backend tasks: 1 or 2 to run, 0 to stop without destroying resources."
   type        = number
   default     = 1
 
   validation {
-    condition     = contains([0, 1], var.backend_desired_count)
-    error_message = "backend_desired_count must be 0 or 1 (sessions live in process memory)."
+    condition     = contains([0, 1, 2], var.backend_desired_count)
+    error_message = "backend_desired_count must be 0, 1 or 2."
   }
 }
 
@@ -71,6 +71,22 @@ variable "bedrock_enabled" {
   description = "Run the agent on Bedrock (needs envs/dev-app applied). false = AGENT_LLM=local."
   type        = bool
   default     = true
+}
+
+variable "bedrock_router_model_id" {
+  # Not the global. profile: on 2026-10-05 it answered ServiceUnavailable to every call from the
+  # model account, and HybridRouter then fell back to the rules after each failed attempt.
+  description = "Router model (Bedrock Haiku 4.5, US cross-region profile; shares its quota with the inquiry model)."
+  type        = string
+  default     = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+}
+
+variable "bedrock_max_attempts" {
+  # Throttling comes back at once and retries back off by a second or two, so a third attempt
+  # rides out the model account's low per-minute quota well within CloudFront's 60 s.
+  description = "Attempts per Bedrock call, including the first (BEDROCK_MAX_ATTEMPTS)."
+  type        = number
+  default     = 3
 }
 
 variable "bedrock_inquiry_fallback_model_id" {

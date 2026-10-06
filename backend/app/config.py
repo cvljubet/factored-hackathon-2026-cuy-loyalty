@@ -32,6 +32,19 @@ class Settings(BaseSettings):
     # Unset: the default chain (the ECS task role). Independent of BEDROCK_PROFILE.
     serving_aws_profile: str | None = None
 
+    # Where chat sessions, turns and handoffs are kept: "dynamodb" is the conversations table;
+    # "memory" is process-local and lost on restart (local runs and tests).
+    conversations_backend: Literal["memory", "dynamodb"] = "memory"
+    conversations_table_name: str = "cuy-loyalty-dev-conversations"
+    conversations_aws_region: str = "us-east-2"
+    # Same rules as SERVING_AWS_PROFILE: unset means the default chain (the ECS task role).
+    conversations_aws_profile: str | None = None
+    # A session idle for longer starts a new conversation (DynamoDB only).
+    session_idle_minutes: int = Field(default=10, gt=0)
+    # TTL: sessions and turns expire this long after their last write; handoffs after creation.
+    session_retention_days: int = Field(default=7, gt=0)
+    handoff_retention_days: int = Field(default=30, gt=0)
+
     # Chat agent models. "local" is a deterministic stand-in that needs no AWS access;
     # "bedrock" runs Bedrock Converse via Pydantic AI.
     agent_llm: Literal["local", "bedrock"] = "local"
@@ -55,6 +68,9 @@ class Settings(BaseSettings):
 
     # Browser origins allowed to call the API (the Vite dev server by default).
     cors_allow_origins: list[str] = ["http://localhost:5173"]
+
+    # Level for the application's own loggers (agents.*, app.*); uvicorn configures its own.
+    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
 
     @model_validator(mode="after")
     def _guardrail_needs_id_and_version(self) -> "Settings":

@@ -1,11 +1,16 @@
+import json
+import logging
+
 import pytest
 
 from agents.engines.escalation import InMemoryHandoffStore
 from agents.factory import build_orchestrator
 from agents.local_model import local_model
+from agents.sessions import InMemorySessionStore, SessionConflict
 from app.chat.dependencies import get_orchestrator
 from app.customers.dependencies import RepositoryProfileSource
 from app.main import app
+from app.observability import TURN_LOGGER
 
 
 @pytest.fixture
@@ -123,3 +128,44 @@ def test_user_without_customer_id_is_403(chat_client, token_factory, customer_re
 )
 def test_invalid_bodies_are_422(chat_client, token_factory, body):
     assert chat_client.post("/chat", json=body, headers=auth_header(token_factory())).status_code == 422
+
+
+class ConflictingSessions(InMemorySessionStore):
+    """Another request always saves the session first."""
+
+    def save(self, customer_id, session_id, state, new_turns):
+        raise SessionConflict(session_id)
+
+
+def test_a_concurrent_save_is_409_and_asks_to_send_again(client, customer_repository, token_factory):
+    orchestrator = build_orchestrator(
+        serving=RepositoryProfileSource(customer_repository), model=local_model(), sessions=ConflictingSessions()
+    )
+    app.dependency_overrides[get_orchestrator] = lambda: orchestrator
+
+    response = client.post("/chat", json={"message": "hola", "session_id": "my-session-123"},
+                           headers=auth_header(token_factory()))
+
+    assert response.status_code == 409
+    assert "send your message again" in response.json()["detail"]
+
+
+def test_each_turn_is_logged_once_without_the_message(chat_client, token_factory):
+    from test_observability import CapturedTurns
+
+    captured = CapturedTurns()
+    turns = logging.getLogger(TURN_LOGGER)
+    turns.addHandler(captured)
+    try:
+        response = chat_client.post(
+            "/chat",
+            json={"message": "Mi tarjeta 4111 1111 1111 1111 y mi clave es hunter2"},
+            headers=auth_header(token_factory()),
+        )
+    finally:
+        turns.removeHandler(captured)
+
+    assert response.status_code == 200
+    [line] = captured.lines
+    assert json.loads(line)["engine"] == response.json()["engine"]
+    assert "4111" not in line and "hunter2" not in line

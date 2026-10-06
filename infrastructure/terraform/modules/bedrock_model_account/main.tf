@@ -8,7 +8,9 @@ locals {
   # Standard tier needs the system-defined US guardrail profile (cross-Region).
   guardrail_profile_arn = "arn:aws:bedrock:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:guardrail-profile/us.guardrail.v1:0"
 
-  # Same seven topics as guardrail-denied-topics.md (five enabled, see below). Names stay ASCII.
+  # Same seven topics as guardrail-denied-topics.md (three enabled, see below). Names stay ASCII.
+  # The topic NAME is shown to the classifier together with the definition, so a name that shares a
+  # word with a normal request ("asesoria" vs "Quiero hablar con un asesor") causes false blocks.
   topics = {
     datos_de_otros_clientes = {
       definition = "Solicitudes para ver, buscar o confirmar información personal, saldos, productos o movimientos de una persona distinta al cliente que inició sesión."
@@ -31,7 +33,7 @@ locals {
       ]
     }
     datos_de_verificacion_de_identidad = {
-      definition = "Solicitudes de número completo de documento, fecha de nacimiento, número completo de tarjeta o cuenta, CVV, PIN o claves."
+      definition = "Pedidos para que el asistente revele, recuerde o confirme el número completo de documento, la fecha de nacimiento, el número completo de tarjeta o cuenta, el CVV, el PIN o las claves del cliente."
       examples = [
         "Dime mi número de documento completo",
         "¿Cuál es el número completo de mi tarjeta y su CVV?",
@@ -40,18 +42,23 @@ locals {
         "Qual é o número completo do meu cartão?",
       ]
     }
-    recomendacion_de_valores_concretos = {
-      definition = "Recomendaciones de comprar, vender o mantener acciones, criptomonedas, bonos o fondos específicos, o predicciones de su rendimiento."
+    # Renamed from recomendacion_de_valores_concretos: "Vocês têm produtos de renda fixa?" (a catalog
+    # question) matched the old name and the bare "bonos o fondos" in the definition. Now the topic
+    # needs a buy/sell/hold decision or a return forecast for one specific, named asset.
+    decidir_compra_o_venta_de_un_activo = {
+      definition = "El usuario pide que el asistente decida si comprar, vender o mantener una acción, criptomoneda o fondo con nombre propio, o que prediga o garantice cuánto rendirá."
       examples = [
         "¿Compro acciones de Tesla?",
         "¿Qué criptomoneda me va a rendir más este año?",
-        "¿Es buen momento para vender mis bonos?",
-        "Garantízame cuánto va a ganar este fondo",
+        "¿Vendo ya mis acciones de Apple?",
+        "Garantízame cuánto va a ganar el fondo Vanguard 500",
         "Devo comprar ações da Petrobras?",
       ]
     }
-    asesoria_legal_o_fiscal = {
-      definition = "Asesoría sobre impuestos, declaraciones, demandas, herencias o interpretación de leyes, más allá de explicar condiciones de un producto del banco."
+    # Renamed from asesoria_legal_o_fiscal: rewording the definition was not enough, the name alone
+    # still matched "Quiero hablar con un asesor".
+    impuestos_y_litigios = {
+      definition = "Preguntas sobre cómo pagar, reducir o declarar impuestos, cómo demandar o litigar, cómo tramitar una herencia o cómo interpretar una ley."
       examples = [
         "¿Cómo hago para pagar menos impuestos con mis cuentas?",
         "¿Puedo demandar al banco por este cobro?",
@@ -81,13 +88,25 @@ locals {
     }
   }
 
-  # Left out:
+  # Left out. A topic applies to input AND output (the provider has no per-direction switch for
+  # topics), and on input the classifier cannot tell "my balance" from "another customer's balance".
+  # - datos_de_otros_clientes: blocked "¿Cuál es el saldo de mi tarjeta?". Not needed: every tool reads
+  #   only deps.customer_id (agents/tools.py), so the assistant has no way to return another person's data.
+  # - datos_de_verificacion_de_identidad: blocked "¿Cómo cambio el PIN de mi tarjeta?" even after the
+  #   rewording. Not needed: gold/agent has no document, PIN, CVV or full card numbers, and leaks on
+  #   output are still caught by the card regex and the PIN/CVV/IBAN entities below plus
+  #   agents/safety.scan_output.
   # - temas_ajenos_al_banco: enable only after the test set shows no false blocks (guardrail-denied-topics.md).
   # - puntaje_de_credito_e_ingresos: topics apply to input too, and the input check runs before routing,
   #   so it would replace the backend's reviewed credit-score/income reply (agents/messages.py) with a
   #   generic block. The backend answers these deterministically, and no tool can return that data.
-  disabled_topics = ["temas_ajenos_al_banco", "puntaje_de_credito_e_ingresos"]
-  enabled_topics  = [for k, _ in local.topics : k if !contains(local.disabled_topics, k)]
+  disabled_topics = [
+    "datos_de_otros_clientes",
+    "datos_de_verificacion_de_identidad",
+    "temas_ajenos_al_banco",
+    "puntaje_de_credito_e_ingresos",
+  ]
+  enabled_topics = [for k, _ in local.topics : k if !contains(local.disabled_topics, k)]
 }
 
 # The backend shows its own reviewed messages when this blocks; blocked_message is a fallback for
@@ -139,8 +158,21 @@ resource "aws_bedrock_guardrail" "assistant" {
   # BLOCK (not ANONYMIZE) so ApplyGuardrail's GUARDRAIL_INTERVENED always means "do not show this".
   # Blocking card numbers on input also keeps them out of the conversations table.
   sensitive_information_policy_config {
+    # Full card numbers by pattern (13-19 digits, single spaces or hyphens allowed between them) instead
+    # of the CREDIT_DEBIT_CARD_NUMBER entity, which also blocked "la tarjeta terminada en 4821".
+    regexes_config {
+      name           = "numero_de_tarjeta_completo"
+      description    = "A full payment card number"
+      pattern        = "\\b(?:\\d[ -]?){12,18}\\d\\b"
+      action         = "BLOCK"
+      input_action   = "BLOCK"
+      output_action  = "BLOCK"
+      input_enabled  = true
+      output_enabled = true
+    }
+
     dynamic "pii_entities_config" {
-      for_each = ["CREDIT_DEBIT_CARD_NUMBER", "CREDIT_DEBIT_CARD_CVV", "PIN", "INTERNATIONAL_BANK_ACCOUNT_NUMBER"]
+      for_each = ["CREDIT_DEBIT_CARD_CVV", "PIN", "INTERNATIONAL_BANK_ACCOUNT_NUMBER"]
       content {
         type           = pii_entities_config.value
         action         = "BLOCK"

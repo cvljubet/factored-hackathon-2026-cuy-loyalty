@@ -106,7 +106,7 @@ resource "aws_route_table_association" "backend_private" {
 
 # Backend + agent API on ECS Fargate behind an internal HTTP ALB that only CloudFront reaches,
 # through its VPC origin, so the Cognito token never crosses the internet in clear.
-# One task: sessions and handoffs are in process memory.
+# Sessions and handoffs live in the conversations table, so tasks hold no chat state.
 module "backend_service" {
   source         = "../../modules/ecs_service"
   name_prefix    = local.name_prefix
@@ -128,7 +128,7 @@ module "backend_service" {
     COGNITO_USER_POOL_ID  = module.auth.user_pool_id
     COGNITO_APP_CLIENT_ID = module.auth.user_pool_client_id
     CORS_ALLOW_ORIGINS    = jsonencode(var.backend_cors_origins)
-  }, local.serving_environment, local.agent_environment)
+  }, local.serving_environment, local.conversations_environment, local.agent_environment)
 }
 
 # The agent's tools and GET /me/profile read the customer-serving table with the task role (no
@@ -152,6 +152,32 @@ resource "aws_iam_role_policy" "backend_serving_read" {
       Effect   = "Allow"
       Action   = ["dynamodb:GetItem", "dynamodb:Query"]
       Resource = module.customer_serving.table_arn
+    }]
+  })
+}
+
+# Chat sessions, turns and handoffs, with the task role (no CONVERSATIONS_AWS_PROFILE).
+locals {
+  conversations_environment = {
+    CONVERSATIONS_BACKEND    = "dynamodb"
+    CONVERSATIONS_TABLE_NAME = module.conversations.table_name
+    CONVERSATIONS_AWS_REGION = var.region
+  }
+}
+
+# Exactly what agents/conversations.py calls: GetItem (SESSION), Query (latest TURN# items), PutItem
+# (HANDOFF#, and TURN# inside the save transaction) and UpdateItem (SESSION, same transaction).
+# TransactWriteItems has no IAM action of its own: each item in it is checked against these.
+resource "aws_iam_role_policy" "backend_conversations_rw" {
+  name = "read-write-conversations"
+  role = module.backend_service.task_role_name
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = ["dynamodb:GetItem", "dynamodb:Query", "dynamodb:PutItem", "dynamodb:UpdateItem"]
+      Resource = module.conversations.table_arn
     }]
   })
 }
@@ -185,6 +211,8 @@ locals {
       BEDROCK_PROFILE           = "bedrock"
       BEDROCK_GUARDRAIL_ID      = local.bedrock.bedrock_guardrail_id
       BEDROCK_GUARDRAIL_VERSION = local.bedrock.bedrock_guardrail_version
+      BEDROCK_ROUTER_MODEL_ID   = var.bedrock_router_model_id
+      BEDROCK_MAX_ATTEMPTS      = tostring(var.bedrock_max_attempts)
     },
     var.bedrock_inquiry_fallback_model_id == "" ? {} : {
       BEDROCK_INQUIRY_FALLBACK_MODEL_ID = var.bedrock_inquiry_fallback_model_id
@@ -256,10 +284,11 @@ module "customer_serving" {
   deletion_protection = false # hackathon env: allow teardown
 }
 
-# Persisted chat sessions. PK = CUST#<customer_id>#SESSION#<session_id>; SK = SESSION (metadata,
-# failure count, language) | TURN#<ts>#<message_id> (user and assistant turns) | HANDOFF#<ts>.
-# The latest turns are a Query on PK with begins_with(SK, "TURN#"), newest first. Items expire
-# through expires_at (epoch seconds), e.g. 90 days after the last turn.
+# Persisted chat sessions (agents/conversations.py). PK = CUST#<customer_id>#SESSION#<session_id>;
+# SK = SESSION (metadata, failure count, language, handoff state) | TURN#<ts>#<message_id> (customer
+# and assistant turns) | HANDOFF#<ts>#<handoff_id>. The latest turns are a Query on PK over the TURN#
+# range, newest first. Items expire through expires_at (epoch seconds): sessions and turns 7 days
+# after their last write, handoffs 30 days after creation (SESSION_/HANDOFF_RETENTION_DAYS).
 module "conversations" {
   source              = "../../modules/dynamodb"
   name_prefix         = local.name_prefix

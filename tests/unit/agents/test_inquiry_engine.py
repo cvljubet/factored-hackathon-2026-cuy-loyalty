@@ -1,5 +1,7 @@
 import pytest
 from pydantic_ai.messages import ModelRequest, ModelResponse, ToolCallPart, ToolReturnPart, UserPromptPart
+from pydantic_ai.models.fallback import FallbackModel
+from pydantic_ai.models.function import FunctionModel
 
 from agents.engines.inquiry import MAX_ROUNDS, InquiryEngine
 from agents.engines.recommendation import NotReadyRecommendationProvider
@@ -110,6 +112,30 @@ def test_model_errors_and_empty_answers_fail(profiles, step):
     result = engine_with(ScriptedModel([step]).model, profiles).handle(make_context(), "hola")
 
     assert (result.failed, result.status) == (True, "failed")
+
+
+class TestUsageTrace:
+    def test_records_tokens_and_the_model_that_answered(self, profiles):
+        script = ScriptedModel([call_tool("get_my_profile"), answer("Vives en Cusco.")])
+
+        result = engine_with(script.model, profiles).handle(make_context(), "¿Dónde vivo?")
+
+        assert result.models_used == ("scripted",)
+        assert result.fallback_used is False
+        assert result.input_tokens > 0 and result.output_tokens > 0
+
+    def test_a_fallback_model_answering_is_flagged(self, profiles):
+        primary = ScriptedModel([model_down()])
+        backup = FunctionModel(lambda messages, info: answer("Hola."), model_name="backup")
+
+        result = engine_with(FallbackModel(primary.model, backup), profiles).handle(make_context(), "hola")
+
+        assert (result.status, result.models_used, result.fallback_used) == ("answered", ("backup",), True)
+
+    def test_a_failed_turn_keeps_its_partial_usage(self, profiles):
+        result = engine_with(ScriptedModel([model_down()]).model, profiles).handle(make_context(), "hola")
+
+        assert (result.failed, result.models_used, result.fallback_used) == (True, (), False)
 
 
 class TestLocalModel:

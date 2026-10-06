@@ -3,12 +3,15 @@ from pydantic import ValidationError
 from pydantic_ai.models.bedrock import BedrockConverseModel
 from pydantic_ai.models.function import FunctionModel
 
+from agents.conversations import DynamoHandoffStore, DynamoSessionStore
+from agents.engines.escalation import InMemoryHandoffStore
 from agents.guardrails import BedrockGuardrail, NoOpGuardrail
 from agents.model_router import HybridRouter
 from agents.models import bedrock_runtime_client
 from agents.routing import RuleBasedRouter
 from agents.serving import DynamoServingRepository
-from app.chat.dependencies import bedrock_config, build_guardrail, build_inquiry_model, build_router, uses_bedrock
+from agents.sessions import InMemorySessionStore
+from app.chat.dependencies import bedrock_config, build_chat_stores, build_guardrail, build_inquiry_model, build_router, uses_bedrock
 from app.customers.dependencies import RepositoryProfileSource, build_serving
 from app.config import Settings
 
@@ -152,3 +155,44 @@ def test_ecs_style_config_gives_bedrock_its_profile_and_dynamodb_the_default_cha
 
     assert access_key(bedrock_runtime_client(bedrock_config(ecs))) == "AKIDBEDROCK"
     assert access_key(build_serving(ecs).table.meta.client) == "AKIDTASKROLE"
+
+
+def test_chat_stores_default_to_memory_without_aws():
+    sessions, handoffs = build_chat_stores(settings())
+
+    assert isinstance(sessions, InMemorySessionStore)
+    assert isinstance(handoffs, InMemoryHandoffStore)
+
+
+def test_dynamodb_chat_settings_reach_both_stores():
+    configured = settings(conversations_backend="dynamodb", conversations_table_name="conv-1",
+                          conversations_aws_region="us-west-2", session_idle_minutes=10,
+                          session_retention_days=7, handoff_retention_days=30)
+
+    sessions, handoffs = build_chat_stores(configured)
+
+    assert isinstance(sessions, DynamoSessionStore) and isinstance(handoffs, DynamoHandoffStore)
+    assert sessions.table is handoffs.table
+    assert (sessions.table.name, sessions.table.meta.client.meta.region_name) == ("conv-1", "us-west-2")
+    assert (sessions.idle.total_seconds(), sessions.retention.days, handoffs.retention.days) == (600, 7, 30)
+
+
+def test_conversations_use_their_own_profile_never_the_bedrock_one(three_profiles):
+    both = settings(agent_llm="bedrock", bedrock_profile="model-account",
+                    conversations_backend="dynamodb", conversations_aws_profile="team-account")
+
+    sessions, _ = build_chat_stores(both)
+
+    assert access_key(sessions.table.meta.client) == "AKIDTEAM"
+
+
+def test_in_ecs_conversations_take_the_task_role(tmp_path, monkeypatch):
+    config = tmp_path / "config"
+    config.write_text("[profile bedrock]\naws_access_key_id = AKIDBEDROCK\naws_secret_access_key = s\n")
+    monkeypatch.setenv("AWS_CONFIG_FILE", str(config))
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "AKIDTASKROLE")
+
+    sessions, _ = build_chat_stores(settings(agent_llm="bedrock", bedrock_profile="bedrock",
+                                             conversations_backend="dynamodb"))
+
+    assert access_key(sessions.table.meta.client) == "AKIDTASKROLE"
