@@ -155,7 +155,7 @@ def get_exchange_rate(
 
 
 @_customer_scoped_tool
-def recommend_products(ctx: RunContext[AgentDeps]) -> ToolResult:
-    """Products recommended for the signed-in customer by the propensity model."""
+def recommend_benefit(ctx: RunContext[AgentDeps]) -> ToolResult:
+    """A loyalty benefit recommended for the signed-in customer (an illustrative demo benefit)."""
     _check_round(ctx)
-    return tools.recommend_products(ctx.deps)
+    return tools.recommend_benefit(ctx.deps)

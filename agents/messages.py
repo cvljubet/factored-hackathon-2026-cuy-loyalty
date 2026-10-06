@@ -41,13 +41,15 @@ _MESSAGES: dict[str, dict[Language, str]] = {
         "es": "No puedo ayudarte con ese mensaje. ¿Hay algo más sobre tus productos o beneficios en que pueda ayudarte?",
         "pt": "Não posso ajudar com essa mensagem. Posso ajudar com algo sobre seus produtos ou benefícios?",
     },
-    "recommendations_unavailable": {
-        "es": "Las recomendaciones personalizadas aún no están disponibles. Pronto podré sugerirte productos.",
-        "pt": "As recomendações personalizadas ainda não estão disponíveis. Em breve poderei sugerir produtos.",
+    # The loyalty recommendation, worded without a model (local runs, and whenever the model's wording is refused).
+    "benefit_recommendation": {
+        "es": "Te recomiendo este beneficio: {offer_title}. {offer_description} {customer_safe_reason} ({illustrative_note})",
+        "pt": "Recomendo este benefício: {offer_title}. {offer_description} {customer_safe_reason} ({illustrative_note})",
     },
-    "recommendations_intro": {
-        "es": "Según tu perfil, estos productos podrían interesarte:",
-        "pt": "Com base no seu perfil, estes produtos podem interessar a você:",
+    "no_product_advice": {
+        "es": "No puedo recomendarte productos financieros específicos, pero sí un beneficio de tu programa de fidelidad.",
+        "pt": "Não posso recomendar produtos financeiros específicos, mas posso indicar um benefício do seu programa de "
+              "fidelidade.",
     },
     # Same for every escalation reason. It does not claim a human is already replying.
     "handoff_acknowledgement": {

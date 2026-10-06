@@ -30,9 +30,10 @@ def _instructions(ctx: RunContext[AgentContext]) -> str:
     return f"""Classify one message a bank customer sent to the loyalty assistant.
 
 engine:
-- inquiry: questions about their own profile, products, balances, spending, campaigns, benefits,
-  transactions, contacts, complaints, branches or exchange rates
-- recommendation: asks which product they should get or for suggestions
+- inquiry: questions about their own existing data: profile, products, balances, spending, the campaigns or
+  benefits they already have, points, transactions, contacts, complaints, branches or exchange rates
+- recommendation: asks what is recommended or suggested for them: which benefit, promotion or reward suits
+  them, how to get more out of the loyalty programme or the bank, or which product they should get
 - escalation: asks for a human, or asks whether they would be approved or are eligible for credit
 - out_of_scope: anything else
 language: the language of the message, es or pt. If unclear, use {ctx.deps.language}.

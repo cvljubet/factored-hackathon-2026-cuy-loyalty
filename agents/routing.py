@@ -79,6 +79,12 @@ _RECOMMENDATION = compile_patterns(
         r"\bdevo (contratar|abrir|ter)\b",
         r"\bmejor (producto|tarjeta|cuenta) para mi\b",
         r"\bmelhor (produto|cartao|conta) para mim\b",
+        # Loyalty benefits: asking what suits them or what to take advantage of (not "what do I have").
+        r"\b(beneficio|promocion|promocao|oferta|premio|recompensa)s?\b.*\bpara (mi|mim)\b",
+        r"\b(aprovechar|aproveitar)\b",
+        r"\b(sacar|tirar) (mas |mais |el maximo |o maximo )?(provecho|proveito)\b",
+        r"\brecommend",
+        r"\bsuggest",
     ]
 )
 

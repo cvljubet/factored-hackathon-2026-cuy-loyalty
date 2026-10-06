@@ -16,7 +16,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict
 
 from agents.deps import AgentDeps
-from agents.engines.recommendation import payload_for
+from agents.engines.recommendation import TOOL_NAME as BENEFIT_TOOL, safe_recommendation
 from agents.serving import STORAGE_KEYS
 from agents.text import city_key
 
@@ -36,7 +36,7 @@ TOOL_NAMES = (
     "get_my_complaints",
     "get_branch_info",
     "get_exchange_rate",
-    "recommend_products",
+    "recommend_benefit",
 )
 
 BACKEND_PREFIX = "bk_"
@@ -256,14 +256,8 @@ def get_exchange_rate(
     return _run("get_exchange_rate", build)
 
 
-def recommend_products(deps: AgentDeps) -> ToolResult:
-    try:
-        payload = payload_for(deps.recommendations, deps.context)
-    except Exception:
-        logger.exception("Recommendation lookup failed")
-        return ToolResult(tool="recommend_products", status="error", reason="tool_failed")
-    if payload is None:
-        return ToolResult(tool="recommend_products", status="unavailable", reason="model_not_ready")
-    return ToolResult(
-        tool="recommend_products", status="ok", data=payload.model_dump(mode="json", exclude={"customer_id"})
-    )
+def recommend_benefit(deps: AgentDeps) -> ToolResult:
+    """The illustrative loyalty benefit the policy chose for the signed-in customer (agents.loyalty). Only the
+    customer-safe payload is returned: never the risk score, tier, reason code, model version or strategy."""
+    rec = safe_recommendation(deps.recommendations, deps.context)  # a failing store gives the generic benefit
+    return _ok(BENEFIT_TOOL, rec.customer_payload())

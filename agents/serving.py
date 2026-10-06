@@ -4,6 +4,7 @@ in-memory stand-in for tests and local runs without AWS.
 The table (loaded by data/pipelines/serving/load_customer_serving.py from the agent zone):
 
     PK = CUST#<customer_id>  SK = PROFILE | TXN#<ts>#<id> | CONTACT#<ts>#<id> | COMPLAINT#<ts>#<id> | CAMPAIGN#<ts>#<id>
+    PK = CUST#<customer_id>  SK = ENGAGEMENT_RISK   (the published engagement-risk score, ml/engagement_risk)
     PK = REF#BRANCH          SK = <city_key>#<branch_id>
     PK = REF#FX              SK = <source_currency>#<target_currency>
 
@@ -49,6 +50,10 @@ class ServingRepository(Protocol):
     def get_fx_rate(self, source_currency: str, target_currency: str) -> Item | None: ...
 
     def get_fx_rates(self) -> list[Item]: ...
+
+    def get_engagement_risk(self, customer_id: str) -> Mapping[str, Any] | None:
+        """The customer's ENGAGEMENT_RISK item (without keys), or None if none was published."""
+        ...
 
 
 def customer_pk(customer_id: str) -> str:
@@ -100,6 +105,11 @@ class DynamoServingRepository:
     def get_fx_rates(self) -> list[Item]:
         return self._query("REF#FX", None, None, newest_first=False)
 
+    def get_engagement_risk(self, customer_id: str) -> Mapping[str, Any] | None:
+        """One GetItem on CUST#<customer_id> / ENGAGEMENT_RISK; never another customer's partition."""
+        item = self.table.get_item(Key={"PK": customer_pk(customer_id), "SK": "ENGAGEMENT_RISK"}).get("Item")
+        return None if item is None else _without_keys(item)
+
     def _query(self, pk: str, prefix: str | None, limit: int | None, newest_first: bool = True) -> list[Item]:
         """Items under pk (whose SK starts with prefix), newest SK first, at most limit."""
         condition = Key("PK").eq(pk) & Key("SK").begins_with(prefix) if prefix else Key("PK").eq(pk)
@@ -145,12 +155,15 @@ class InMemoryServingRepository:
         events: Mapping[str, Mapping[str, Iterable[Mapping[str, Any]]]] | None = None,
         branches: Iterable[Mapping[str, Any]] = (),
         fx_rates: Iterable[Mapping[str, Any]] = (),
+        engagement: Mapping[str, Mapping[str, Any]] | None = None,
     ):
-        """events: kind ("transactions", "contacts", "complaints", "campaigns") -> customer_id -> items."""
+        """events: kind ("transactions", "contacts", "complaints", "campaigns") -> customer_id -> items;
+        engagement: customer_id -> ENGAGEMENT_RISK item."""
         self.profiles = dict(profiles or {})
         self.events = {kind: {cid: list(items) for cid, items in by_customer.items()} for kind, by_customer in (events or {}).items()}
         self.branches = [dict(b) for b in branches]
         self.fx_rates = [dict(r) for r in fx_rates]
+        self.engagement = {cid: dict(item) for cid, item in (engagement or {}).items()}
 
     def get_profile(self, customer_id: str, fields: Sequence[str] | None = None) -> Mapping[str, Any] | None:
         profile = self.profiles.get(customer_id)
@@ -186,3 +199,7 @@ class InMemoryServingRepository:
 
     def get_fx_rates(self) -> list[Item]:
         return [dict(r) for r in self.fx_rates]
+
+    def get_engagement_risk(self, customer_id: str) -> Mapping[str, Any] | None:
+        item = self.engagement.get(customer_id)
+        return None if item is None else _without_keys(item)

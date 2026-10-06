@@ -196,3 +196,14 @@ def test_in_ecs_conversations_take_the_task_role(tmp_path, monkeypatch):
                                              conversations_backend="dynamodb"))
 
     assert access_key(sessions.table.meta.client) == "AKIDTASKROLE"
+
+
+def test_benefit_presenter_follows_the_llm_setting():
+    from agents.engines.recommendation import ModelPresenter, TemplatePresenter
+    from app.chat.dependencies import build_presenter
+
+    local = settings()
+    bedrock = settings(agent_llm="bedrock")
+    assert isinstance(build_presenter(local, build_inquiry_model(local)), TemplatePresenter)
+    presenter = build_presenter(bedrock, build_inquiry_model(bedrock))
+    assert isinstance(presenter, ModelPresenter) and presenter.model.model_name == "us.anthropic.claude-haiku-4-5-20251001-v1:0"

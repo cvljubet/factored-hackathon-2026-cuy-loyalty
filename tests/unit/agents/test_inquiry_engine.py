@@ -4,7 +4,7 @@ from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import FunctionModel
 
 from agents.engines.inquiry import MAX_ROUNDS, InquiryEngine
-from agents.engines.recommendation import NotReadyRecommendationProvider
+from agents.loyalty import GenericLoyaltyProvider
 from agents.local_model import local_model
 from agent_testkit import (
     CUSTOMER_ID,
@@ -23,7 +23,7 @@ def profiles():
 
 
 def engine_with(model, profiles) -> InquiryEngine:
-    return InquiryEngine(model, profiles, NotReadyRecommendationProvider())
+    return InquiryEngine(model, profiles, GenericLoyaltyProvider())
 
 
 def test_answers_directly_without_tools(profiles):

@@ -6,6 +6,7 @@ from pydantic_ai.models import Model
 
 from agents.conversations import DynamoHandoffStore, DynamoSessionStore
 from agents.engines.escalation import HandoffStore, InMemoryHandoffStore
+from agents.engines.recommendation import BenefitPresenter, ModelPresenter, TemplatePresenter
 from agents.factory import build_orchestrator
 from agents.guardrails import BedrockGuardrail, Guardrail, NoOpGuardrail
 from agents.local_model import local_model
@@ -77,6 +78,12 @@ def build_chat_stores(settings: Settings) -> tuple[SessionStore, HandoffStore]:
     return InMemorySessionStore(), InMemoryHandoffStore()
 
 
+def build_presenter(settings: Settings, model: Model) -> BenefitPresenter:
+    """Who words the loyalty benefit: the inquiry model on Bedrock (its reply checked against the payload),
+    else the fixed template. The policy and the benefit are chosen without a model either way."""
+    return ModelPresenter(model) if settings.agent_llm == "bedrock" else TemplatePresenter()
+
+
 @lru_cache
 def get_orchestrator() -> Orchestrator:
     """One orchestrator per process, so in-memory sessions and handoffs (if used) persist across requests."""
@@ -84,9 +91,11 @@ def get_orchestrator() -> Orchestrator:
     # One client for every Bedrock call: same credentials, region, timeouts and connection pool.
     client = bedrock_runtime_client(bedrock_config(settings)) if uses_bedrock(settings) else None
     sessions, handoffs = build_chat_stores(settings)
+    model = build_inquiry_model(settings, client)
     return build_orchestrator(
         serving=get_serving_repository(),  # the same repository GET /me/profile reads
-        model=build_inquiry_model(settings, client),
+        model=model,
+        presenter=build_presenter(settings, model),
         router=build_router(settings, client),
         guardrail=build_guardrail(settings, client),
         sessions=sessions,

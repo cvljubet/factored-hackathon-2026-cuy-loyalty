@@ -33,6 +33,37 @@ def test_routes_to_engine(message, engine):
 
 
 @pytest.mark.parametrize(
+    "message, engine, language",
+    [
+        # Loyalty benefit requests: the ML-powered recommendation flow.
+        ("¿Qué beneficio me recomiendas?", "recommendation", "es"),
+        ("¿Tienes alguna promoción para mí?", "recommendation", "es"),
+        ("¿Qué puedo aprovechar de mi programa de beneficios?", "recommendation", "es"),
+        ("¿Qué me recomiendas para sacar más provecho del banco?", "recommendation", "es"),
+        ("Que benefício você recomenda para mim?", "recommendation", "pt"),
+        ("Tem alguma promoção para mim?", "recommendation", "pt"),
+        ("Como posso aproveitar melhor o meu programa de pontos?", "recommendation", "pt"),
+        # Neighbours that must keep their engine.
+        ("Muéstrame mis transacciones", "inquiry", "es"),
+        ("¿Qué beneficios tengo este mes?", "inquiry", "es"),
+        ("¿Cuántos puntos acumulé?", "inquiry", "es"),
+        ("Oi, quero ver meus pontos", "inquiry", "pt"),
+        ("Quiero hablar con un asesor", "escalation", "es"),
+        ("Quero falar com um atendente sobre uma promoção", "escalation", "pt"),
+        ("¿Me aprobarían un préstamo si uso el beneficio?", "escalation", "es"),
+    ],
+)
+def test_loyalty_benefit_routing(message, engine, language):
+    routed = route(message, language="pt" if language == "es" else "es")
+    assert (routed.engine, routed.language) == (engine, language)
+
+
+def test_an_english_benefit_request_reaches_the_recommendation_flow():
+    # English is not a supported reply language, so only the engine is checked.
+    assert route("What benefit would you recommend for me?").engine == "recommendation"
+
+
+@pytest.mark.parametrize(
     "message, language",
     [
         ("¿Cuál es el saldo de mi cuenta?", "es"),

@@ -10,7 +10,8 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from agents.context import AgentContext, Language
 from agents.deps import AgentDeps
-from agents.engines.recommendation import NotReadyRecommendationProvider, RecommendationPayload, RecommendationProvider
+from agents.engines.recommendation import RecommendationProvider
+from agents.loyalty import GenericLoyaltyProvider, LoyaltyRecommendation
 from agents.serving import InMemoryServingRepository
 
 # Any attempt to reach a real model (e.g. Bedrock) fails the test instead of calling AWS.
@@ -56,13 +57,15 @@ class RecordingServing(InMemoryServingRepository):
 
 
 class FixedRecommendationProvider:
-    def __init__(self, payload: RecommendationPayload | None):
-        self.payload = payload
+    """Returns one fixed LoyaltyRecommendation and records which customer each request was for."""
+
+    def __init__(self, recommendation: LoyaltyRecommendation):
+        self.recommendation = recommendation
         self.requested_ids: list[str] = []
 
-    def get_recommendations(self, customer_id: str) -> RecommendationPayload | None:
+    def get_recommendation(self, customer_id: str, language: Language) -> LoyaltyRecommendation:
         self.requested_ids.append(customer_id)
-        return self.payload
+        return self.recommendation
 
 
 class ScriptedModel:
@@ -98,7 +101,7 @@ def make_deps(
     return AgentDeps(
         context=make_context(**context),
         serving=serving or RecordingServing(),
-        recommendations=recommendations or NotReadyRecommendationProvider(),
+        recommendations=recommendations or GenericLoyaltyProvider(),
     )
 
 

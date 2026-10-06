@@ -11,7 +11,7 @@ from pydantic_ai.messages import ModelRequest, ModelResponse, RetryPromptPart, T
 
 from agents import tools
 from agents.engines.inquiry import InquiryEngine
-from agents.engines.recommendation import NotReadyRecommendationProvider
+from agents.loyalty import GenericLoyaltyProvider
 from agents.serving import DynamoServingRepository, InMemoryServingRepository, customer_pk
 from agents.text import city_key
 from agent_testkit import CUSTOMER_ID, OTHER_CUSTOMER_ID, ScriptedModel, answer, call_tool, make_context, make_deps
@@ -107,7 +107,7 @@ def deps_for(table, customer_id=CUSTOMER_ID):
 
 def run_turn(table, steps, customer_id=CUSTOMER_ID):
     script = ScriptedModel(steps)
-    engine = InquiryEngine(script.model, DynamoServingRepository(table), NotReadyRecommendationProvider())
+    engine = InquiryEngine(script.model, DynamoServingRepository(table), GenericLoyaltyProvider())
     result = engine.handle(make_context(customer_id), "pregunta")
     returned = [p for m in script.requests[1][0] if isinstance(m, ModelRequest) for p in m.parts
                 if isinstance(p, ToolReturnPart | RetryPromptPart)] if len(script.requests) > 1 else []
@@ -288,9 +288,9 @@ def test_fx_partial_and_missing_pairs(table):
 
 def test_no_key_customer_id_or_backend_field_reaches_the_model(table):
     """Every tool, run by the agent, as the model receives the results."""
-    calls = [call_tool(name, call_id=f"c{i}") for i, name in enumerate(tools.TOOL_NAMES) if name != "recommend_products"]
+    calls = [call_tool(name, call_id=f"c{i}") for i, name in enumerate(tools.TOOL_NAMES) if name != "recommend_benefit"]
     script = ScriptedModel([ModelResponse(parts=[p for c in calls for p in c.parts]), answer("ok")])
-    engine = InquiryEngine(script.model, DynamoServingRepository(table), NotReadyRecommendationProvider())
+    engine = InquiryEngine(script.model, DynamoServingRepository(table), GenericLoyaltyProvider())
 
     engine.handle(make_context(), "todo")
 
